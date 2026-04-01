@@ -1387,40 +1387,402 @@ CREATE INDEX idx_audit_created ON audit_logs(created_at DESC);
   └────────────────────┘   └─────────────────────┘
 ```
 
-### 3. Fare Calculation
+### 3. Fare Estimation & Calculation
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           FARE CALCULATION FORMULA                               │
+│                      FARE ESTIMATION WORKFLOW                                    │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                  │
-│  Fare = (Base Fare + Distance Fare + Time Fare + Wait Fare) × Surge            │
-│         + Booking Fee + Tolls - Discount                                         │
+│  User enters Pickup & Drop location                                              │
+│              │                                                                   │
+│              ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │     STEP 1: ROUTE CALCULATION (Google Maps API)                             ││
+│  ├─────────────────────────────────────────────────────────────────────────────┤│
+│  │                                                                             ││
+│  │  Input: Pickup (lat, lng) → Drop (lat, lng)                                 ││
+│  │                                                                             ││
+│  │  Output:                                                                    ││
+│  │  • Distance: 12.5 km                                                        ││
+│  │  • Duration: 25 minutes (with traffic)                                      ││
+│  │  • Polyline: Route coordinates                                              ││
+│  │                                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│              │                                                                   │
+│              ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │         STEP 2: GET FARE CONFIGURATION                                      ││
+│  ├─────────────────────────────────────────────────────────────────────────────┤│
+│  │                                                                             ││
+│  │  Based on: City + Vehicle Type                                              ││
+│  │                                                                             ││
+│  │  Example (Mumbai - Sedan):                                                  ││
+│  │  ┌────────────────────────────────────┐                                     ││
+│  │  │  base_fare:        ₹50             │                                     ││
+│  │  │  per_km_rate:      ₹12             │                                     ││
+│  │  │  per_minute_rate:  ₹1.5            │                                     ││
+│  │  │  minimum_fare:     ₹80             │                                     ││
+│  │  │  booking_fee:      ₹10             │                                     ││
+│  │  └────────────────────────────────────┘                                     ││
+│  │                                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│              │                                                                   │
+│              ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │       STEP 3: CALCULATE BASE FARE                                          ││
+│  ├─────────────────────────────────────────────────────────────────────────────┤│
+│  │                                                                             ││
+│  │  Base Fare        =  ₹50                                                    ││
+│  │  + Distance Fare  =  12.5 km × ₹12  =  ₹150                                 ││
+│  │  + Time Fare      =  25 min × ₹1.5  =  ₹37.50                               ││
+│  │  ────────────────────────────────────────────────                           ││
+│  │  Subtotal         =  ₹237.50                                                ││
+│  │  + Booking Fee    =  ₹10                                                    ││
+│  │  ────────────────────────────────────────────────                           ││
+│  │  BASE TOTAL       =  ₹247.50                                                ││
+│  │                                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│              │                                                                   │
+│              ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │         STEP 4: CHECK SURGE PRICING                                         ││
+│  ├─────────────────────────────────────────────────────────────────────────────┤│
+│  │                                                                             ││
+│  │  Query Redis for current surge in pickup area:                              ││
+│  │  surge:{city}:{zone} → multiplier                                           ││
+│  │                                                                             ││
+│  │  Surge Calculation:                                                         ││
+│  │  ────────────────────────────────────────────────                           ││
+│  │  Demand (ride requests in last 5 min): 150                                  ││
+│  │  Supply (available drivers in zone): 30                                     ││
+│  │  Ratio: 150/30 = 5.0                                                        ││
+│  │                                                                             ││
+│  │  Surge Mapping (capped at 3.0x max):                                        ││
+│  │  • Ratio 1.0-1.5 → 1.0x (no surge)                                          ││
+│  │  • Ratio 1.5-2.0 → 1.2x                                                     ││
+│  │  • Ratio 2.0-3.0 → 1.5x                                                     ││
+│  │  • Ratio 3.0-4.0 → 2.0x                                                     ││
+│  │  • Ratio 4.0+    → 2.5x - 3.0x                                              ││
+│  │                                                                             ││
+│  │  Current Example: 2.0x surge                                                ││
+│  │                                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│              │                                                                   │
+│              ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │       STEP 5: APPLY SURGE & ADD-ONS                                         ││
+│  ├─────────────────────────────────────────────────────────────────────────────┤│
+│  │                                                                             ││
+│  │  Base Total (excl booking fee) = ₹237.50                                    ││
+│  │  × Surge Multiplier            = 2.0x                                       ││
+│  │  ────────────────────────────────────────────────                           ││
+│  │  Surged Subtotal              = ₹475.00                                     ││
+│  │  + Booking Fee (no surge)     = ₹10                                         ││
+│  │  ────────────────────────────────────────────────                           ││
+│  │  FARE AFTER SURGE             = ₹485.00                                     ││
+│  │                                                                             ││
+│  │  ADD-ONS (if applicable):                                                   ││
+│  │  + Airport Pickup Fee         = ₹100                                        ││
+│  │  + Toll Charges (estimated)   = ₹50                                         ││
+│  │  + Night Surcharge (11PM-5AM) = ₹30                                         ││
+│  │  ────────────────────────────────────────────────                           ││
+│  │  TOTAL BEFORE DISCOUNT        = ₹665.00                                     ││
+│  │                                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│              │                                                                   │
+│              ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │         STEP 6: APPLY PROMO/DISCOUNT                                        ││
+│  ├─────────────────────────────────────────────────────────────────────────────┤│
+│  │                                                                             ││
+│  │  Promo Code: FIRST50 (50% off, max ₹100)                                    ││
+│  │                                                                             ││
+│  │  Discount = min(₹665 × 50%, ₹100) = ₹100                                    ││
+│  │  ────────────────────────────────────────────────                           ││
+│  │  FINAL ESTIMATED FARE         = ₹565.00                                     ││
+│  │                                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│              │                                                                   │
+│              ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │       STEP 7: SHOW FARE RANGE TO USER                                       ││
+│  ├─────────────────────────────────────────────────────────────────────────────┤│
+│  │                                                                             ││
+│  │  Why range? Traffic conditions may vary:                                    ││
+│  │                                                                             ││
+│  │  Low estimate:  ₹540  (if faster than expected)                             ││
+│  │  High estimate: ₹590  (if slower/route change)                              ││
+│  │                                                                             ││
+│  │  ┌─────────────────────────────────────────────────────┐                    ││
+│  │  │                                                     │                    ││
+│  │  │   🚗 Sedan                                          │                    ││
+│  │  │   ₹540 - ₹590                                      │                    ││
+│  │  │   25 min away • 2.0x surge                         │                    ││
+│  │  │                                                     │                    ││
+│  │  │   [Book Now]                                       │                    ││
+│  │  │                                                     │                    ││
+│  │  └─────────────────────────────────────────────────────┘                    ││
+│  │                                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
 │                                                                                  │
-│  Where:                                                                          │
-│  ─────────────────────────────────────────────────────────────────────────────  │
-│  Base Fare     = Fixed starting charge (e.g., $2.50)                            │
-│  Distance Fare = Distance (km) × Per-km rate (e.g., 10km × $1.50 = $15)         │
-│  Time Fare     = Duration (min) × Per-min rate (e.g., 20min × $0.30 = $6)       │
-│  Wait Fare     = Wait time after 5 min × Wait rate (e.g., 3min × $0.30 = $0.90) │
-│  Surge         = Demand multiplier (1.0x to 3.0x)                               │
-│  Booking Fee   = Platform fee (e.g., $1.00)                                     │
-│  Tolls         = Estimated toll charges                                         │
-│  Discount      = Promo code discount                                            │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Fare Formula Summary
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           FARE FORMULA                                           │
+├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                  │
-│  EXAMPLE:                                                                        │
-│  ─────────────────────────────────────────────────────────────────────────────  │
-│  Base Fare:      $2.50                                                          │
-│  Distance:       10 km × $1.50 = $15.00                                         │
-│  Time:           20 min × $0.30 = $6.00                                         │
-│  Wait:           0 min = $0.00                                                  │
-│  Subtotal:       $23.50                                                         │
-│  Surge (1.5x):   $23.50 × 1.5 = $35.25                                          │
-│  Booking Fee:    $1.00                                                          │
-│  Tolls:          $2.00                                                          │
-│  Discount:       -$5.00 (promo)                                                 │
-│  ─────────────────────────────────────────────────────────────────────────────  │
-│  TOTAL:          $33.25                                                         │
+│   ESTIMATED FARE =                                                               │
+│                                                                                  │
+│   (                                                                              │
+│     Base Fare                                                                    │
+│     + (Distance × Per KM Rate)                                                   │
+│     + (Time × Per Minute Rate)                                                   │
+│     + (Wait Time after 5 min × Wait Rate)                                        │
+│   )                                                                              │
+│   × Surge Multiplier                                                             │
+│   + Booking Fee                                                                  │
+│   + Airport/Zone Fees                                                            │
+│   + Tolls                                                                        │
+│   + Night Surcharge (if applicable)                                              │
+│   - Promo Discount                                                               │
+│   ─────────────────────────────────────────────────────────────────────────────  │
+│   = FINAL FARE                                                                   │
+│                                                                                  │
+│   * Final fare must be >= Minimum Fare for vehicle type                          │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Vehicle Type Pricing (Example: Mumbai)
+
+| Vehicle | Base Fare | Per KM | Per Min | Min Fare | Booking Fee | 10km/20min Example |
+|---------|-----------|--------|---------|----------|-------------|-------------------|
+| **Bike** | ₹15 | ₹5 | ₹0.5 | ₹30 | ₹5 | ₹80 |
+| **Auto** | ₹25 | ₹8 | ₹1 | ₹50 | ₹5 | ₹130 |
+| **Sedan** | ₹50 | ₹12 | ₹1.5 | ₹80 | ₹10 | ₹210 |
+| **SUV/XL** | ₹80 | ₹15 | ₹2 | ₹120 | ₹10 | ₹300 |
+| **Premium** | ₹100 | ₹20 | ₹3 | ₹200 | ₹15 | ₹375 |
+
+### Estimated vs Actual Fare
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                     ESTIMATED vs ACTUAL FARE                                     │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   BEFORE TRIP:                                                                   │
+│   ─────────────────────────────────────────────────────────                     │
+│   Estimation based on:                                                           │
+│   • Predicted route (Google Maps)                                                │
+│   • Current traffic conditions                                                   │
+│   • Historical data                                                              │
+│                                                                                  │
+│   Result: ₹540 - ₹590 (±5% range)                                               │
+│                                                                                  │
+│                            ▼                                                     │
+│                       TRIP HAPPENS                                               │
+│                            ▼                                                     │
+│                                                                                  │
+│   AFTER TRIP:                                                                    │
+│   ─────────────────────────────────────────────────────────                     │
+│   Actual fare calculated from:                                                   │
+│   • Real GPS distance traveled (from driver's location updates)                  │
+│   • Actual trip duration                                                         │
+│   • Wait time at pickup (if rider made driver wait > 5 min)                      │
+│   • Route changes (rider requested detour)                                       │
+│   • Actual tolls passed through                                                  │
+│                                                                                  │
+│   Result: ₹572 (ACTUAL)                                                          │
+│                                                                                  │
+│   ┌─────────────────────────────────────────────────────────────────────────┐   │
+│   │                                                                         │   │
+│   │   RIDER PAYS THE ACTUAL FARE (₹572), NOT THE ESTIMATE                   │   │
+│   │                                                                         │   │
+│   │   If actual > estimate + 20%:                                           │   │
+│   │   → Auto-flag for review                                                │   │
+│   │   → Rider can dispute                                                   │   │
+│   │   → Support team investigates route                                     │   │
+│   │                                                                         │   │
+│   └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Fare Calculation Pseudocode
+
+```python
+def estimate_fare(pickup, dropoff, vehicle_type, promo_code=None):
+    """
+    Calculate fare estimate before trip starts
+    """
+    # Step 1: Get route from Google Maps
+    route = google_maps.directions(pickup, dropoff, traffic_model='best_guess')
+    distance_km = route.distance_meters / 1000
+    duration_min = route.duration_seconds / 60
+    
+    # Step 2: Get fare configuration for city & vehicle
+    city = get_city_from_location(pickup)
+    config = db.query("""
+        SELECT * FROM fare_configurations 
+        WHERE city_id = %s AND vehicle_type = %s AND is_active = TRUE
+    """, [city.id, vehicle_type])
+    
+    # Step 3: Calculate base fare
+    base_fare = config.base_fare
+    distance_fare = distance_km * config.per_km_rate
+    time_fare = duration_min * config.per_minute_rate
+    subtotal = base_fare + distance_fare + time_fare
+    
+    # Step 4: Get surge multiplier from Redis
+    zone = get_zone_from_location(pickup)
+    surge = redis.get(f"surge:{city.id}:{zone.id}") or 1.0
+    surge = min(surge, 3.0)  # Cap at 3.0x
+    
+    # Step 5: Apply surge (not to booking fee)
+    surged_total = subtotal * surge
+    total = surged_total + config.booking_fee
+    
+    # Step 6: Add zone fees
+    pickup_zone = check_geo_zone(pickup)
+    dropoff_zone = check_geo_zone(dropoff)
+    if pickup_zone:
+        total += pickup_zone.pickup_fee
+    if dropoff_zone:
+        total += dropoff_zone.drop_fee
+    
+    # Step 7: Add tolls
+    tolls = estimate_route_tolls(route.polyline)
+    total += tolls
+    
+    # Step 8: Night surcharge (11 PM - 5 AM)
+    if is_night_time():
+        total += config.night_surcharge or 0
+    
+    # Step 9: Apply promo code
+    discount = 0
+    if promo_code:
+        promo = validate_promo(promo_code, rider_id, vehicle_type)
+        if promo:
+            if promo.discount_type == 'PERCENTAGE':
+                discount = min(subtotal * promo.discount_value / 100, promo.max_discount)
+            else:
+                discount = min(promo.discount_value, total)
+    total -= discount
+    
+    # Step 10: Ensure minimum fare
+    total = max(total, config.minimum_fare)
+    
+    # Return estimate with ±5% range
+    return {
+        "low_estimate": round(total * 0.95, 2),
+        "high_estimate": round(total * 1.05, 2),
+        "surge_multiplier": surge,
+        "distance_km": round(distance_km, 2),
+        "duration_min": round(duration_min),
+        "breakdown": {
+            "base_fare": base_fare,
+            "distance_fare": round(distance_fare, 2),
+            "time_fare": round(time_fare, 2),
+            "surge_amount": round(surged_total - subtotal, 2),
+            "booking_fee": config.booking_fee,
+            "zone_fees": pickup_zone.pickup_fee + dropoff_zone.drop_fee,
+            "tolls": tolls,
+            "discount": discount
+        }
+    }
+
+
+def calculate_actual_fare(trip_id):
+    """
+    Calculate actual fare after trip completion
+    """
+    trip = db.get_trip(trip_id)
+    
+    # Get actual distance from GPS points
+    location_points = db.query("""
+        SELECT latitude, longitude, recorded_at 
+        FROM location_history 
+        WHERE trip_id = %s 
+        ORDER BY recorded_at
+    """, [trip_id])
+    
+    actual_distance_km = calculate_distance_from_points(location_points)
+    
+    # Get actual duration
+    actual_duration_min = (trip.ended_at - trip.started_at).total_seconds() / 60
+    
+    # Get wait time (time between driver_arrived and trip_started)
+    wait_time_min = max(0, (trip.started_at - trip.driver_arrived_at).total_seconds() / 60 - 5)
+    
+    # Recalculate fare with actual values
+    config = get_fare_config(trip.city_id, trip.vehicle_type)
+    
+    base_fare = config.base_fare
+    distance_fare = actual_distance_km * config.per_km_rate
+    time_fare = actual_duration_min * config.per_minute_rate
+    wait_fare = wait_time_min * config.wait_time_rate
+    
+    subtotal = base_fare + distance_fare + time_fare + wait_fare
+    surged_total = subtotal * trip.surge_multiplier
+    
+    total = surged_total + config.booking_fee
+    total += trip.zone_fees + trip.tolls
+    total -= trip.discount_amount
+    
+    total = max(total, config.minimum_fare)
+    
+    return round(total, 2)
+```
+
+### Surge Pricing Algorithm
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        SURGE PRICING ALGORITHM                                   │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   RUNS EVERY 5 MINUTES PER ZONE:                                                 │
+│   ─────────────────────────────────────────────────────────────────────────────  │
+│                                                                                  │
+│   1. COUNT DEMAND (ride requests in last 5 min):                                 │
+│      demand = redis.zcount("ride_requests:{zone_id}", now-5min, now)             │
+│                                                                                  │
+│   2. COUNT SUPPLY (available drivers in zone):                                   │
+│      supply = redis.zcard("available_drivers:{zone_id}")                         │
+│                                                                                  │
+│   3. CALCULATE RATIO:                                                            │
+│      ratio = demand / supply                                                     │
+│                                                                                  │
+│   4. MAP RATIO TO SURGE MULTIPLIER:                                              │
+│      ┌─────────────────────────────────────────────────────────┐                │
+│      │  Ratio        │  Surge   │  Description                 │                │
+│      │───────────────│──────────│──────────────────────────────│                │
+│      │  0.0 - 1.0    │  1.0x    │  Excess supply (no surge)    │                │
+│      │  1.0 - 1.5    │  1.0x    │  Balanced (no surge)         │                │
+│      │  1.5 - 2.0    │  1.2x    │  Slight demand               │                │
+│      │  2.0 - 2.5    │  1.4x    │  Moderate demand             │                │
+│      │  2.5 - 3.0    │  1.6x    │  High demand                 │                │
+│      │  3.0 - 4.0    │  2.0x    │  Very high demand            │                │
+│      │  4.0 - 5.0    │  2.5x    │  Peak demand                 │                │
+│      │  5.0+         │  3.0x    │  Maximum surge (capped)      │                │
+│      └─────────────────────────────────────────────────────────┘                │
+│                                                                                  │
+│   5. SMOOTH TRANSITIONS:                                                         │
+│      • Surge increases gradually (max +0.3x per 5 min)                          │
+│      • Surge decreases faster (max -0.5x per 5 min)                             │
+│      • Prevents sudden spikes                                                    │
+│                                                                                  │
+│   6. STORE IN REDIS:                                                             │
+│      redis.setex("surge:{city}:{zone}", 300, multiplier)                        │
+│      redis.publish("surge_updates", {zone, multiplier})                          │
+│                                                                                  │
+│   7. NOTIFY DRIVERS:                                                             │
+│      Push notification: "High demand in [Area]! 2.0x surge active"              │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
