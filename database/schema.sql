@@ -1,280 +1,670 @@
 -- ============================================================================
--- RIDE SHARING APPLICATION - DATABASE SCHEMA
+-- RIDE SHARING APPLICATION - COMPLETE DATABASE SCHEMA
 -- (Like UBER | OLA | Rapido | Lyft)
 -- ============================================================================
+-- This schema includes complete payment system with:
+-- - Rider wallet management
+-- - Driver earnings tracking
+-- - Driver wallet & balance (cash owed, available balance)
+-- - Commission collection from cash trips
+-- - Payout management (weekly/instant)
+-- ============================================================================
 
--- Enable PostGIS extension for geospatial data
+-- Enable Extensions
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ============================================================================
+-- ENUMS
+-- ============================================================================
+CREATE TYPE driver_status AS ENUM ('AVAILABLE', 'BUSY', 'OFFLINE', 'IN_TRIP');
+CREATE TYPE vehicle_type AS ENUM ('sedan', 'suv', 'bike', 'auto', 'pool', 'premium', 'xl');
+CREATE TYPE trip_status AS ENUM (
+    'PENDING',
+    'MATCHED',
+    'DRIVER_ARRIVED',
+    'IN_PROGRESS',
+    'COMPLETED',
+    'CANCELLED_BY_RIDER',
+    'CANCELLED_BY_DRIVER',
+    'NO_DRIVERS_AVAILABLE'
+);
+CREATE TYPE payment_status AS ENUM ('PENDING', 'AUTHORIZED', 'COMPLETED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED');
+CREATE TYPE payment_method_type AS ENUM ('card', 'wallet', 'cash', 'upi', 'net_banking');
+CREATE TYPE payout_status AS ENUM ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED');
+CREATE TYPE driver_document_status AS ENUM ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED');
+CREATE TYPE ticket_status AS ENUM ('OPEN', 'IN_PROGRESS', 'WAITING_ON_CUSTOMER', 'RESOLVED', 'CLOSED');
+CREATE TYPE ticket_priority AS ENUM ('P0', 'P1', 'P2', 'P3', 'P4');
+
+-- ============================================================================
+-- CITIES TABLE (Service Areas)
+-- ============================================================================
+CREATE TABLE cities (
+    city_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name              VARCHAR(100) NOT NULL,
+    state             VARCHAR(100),
+    country           VARCHAR(100) NOT NULL DEFAULT 'India',
+    timezone          VARCHAR(50) NOT NULL DEFAULT 'Asia/Kolkata',
+    currency          VARCHAR(10) DEFAULT 'INR',
+    is_active         BOOLEAN DEFAULT TRUE,
+    boundaries        GEOGRAPHY(Polygon, 4326),
+    commission_rate   DECIMAL(5,2) DEFAULT 20.00,  -- Platform commission %
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================================================
+-- VEHICLE TYPES TABLE
+-- ============================================================================
+CREATE TABLE vehicle_types (
+    vehicle_type_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name              VARCHAR(50) NOT NULL UNIQUE,
+    display_name      VARCHAR(100) NOT NULL,
+    description       VARCHAR(255),
+    icon_url          VARCHAR(500),
+    max_passengers    INT DEFAULT 4,
+    is_active         BOOLEAN DEFAULT TRUE,
+    sort_order        INT DEFAULT 0,
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================================================
+-- FARE CONFIGS TABLE (Per City, Per Vehicle Type Pricing)
+-- ============================================================================
+CREATE TABLE fare_configs (
+    config_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    city_id           UUID NOT NULL REFERENCES cities(city_id),
+    vehicle_type      vehicle_type NOT NULL,
+    
+    -- Fare Components
+    base_fare         DECIMAL(10,2) NOT NULL DEFAULT 50.00,
+    per_km_rate       DECIMAL(10,2) NOT NULL DEFAULT 12.00,
+    per_minute_rate   DECIMAL(10,2) NOT NULL DEFAULT 2.00,
+    minimum_fare      DECIMAL(10,2) NOT NULL DEFAULT 50.00,
+    booking_fee       DECIMAL(10,2) DEFAULT 10.00,
+    cancellation_fee  DECIMAL(10,2) DEFAULT 50.00,
+    
+    -- Wait Time
+    wait_time_free_minutes INT DEFAULT 5,
+    wait_time_rate    DECIMAL(10,2) DEFAULT 2.00,  -- Per minute after free wait
+    
+    -- Special Fees
+    airport_pickup_fee DECIMAL(10,2) DEFAULT 100.00,
+    airport_drop_fee   DECIMAL(10,2) DEFAULT 0.00,
+    night_charge_multiplier DECIMAL(3,2) DEFAULT 1.25,  -- 11PM - 5AM
+    
+    is_active         BOOLEAN DEFAULT TRUE,
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(city_id, vehicle_type)
+);
+
+-- ============================================================================
+-- SURGE CONFIGS TABLE
+-- ============================================================================
+CREATE TABLE surge_configs (
+    config_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    city_id             UUID NOT NULL REFERENCES cities(city_id),
+    demand_threshold    DECIMAL(5,2) DEFAULT 1.5,       -- Demand/Supply ratio to trigger surge
+    max_surge           DECIMAL(3,2) DEFAULT 3.0,       -- Maximum surge multiplier
+    calculation_interval_seconds INT DEFAULT 60,        -- How often to recalculate
+    
+    -- Surge Levels: [{"min_ratio": 1.5, "max_ratio": 2.0, "multiplier": 1.2}, ...]
+    surge_levels        JSONB NOT NULL DEFAULT '[
+        {"min_ratio": 1.5, "max_ratio": 2.0, "multiplier": 1.2},
+        {"min_ratio": 2.0, "max_ratio": 3.0, "multiplier": 1.5},
+        {"min_ratio": 3.0, "max_ratio": 4.0, "multiplier": 2.0},
+        {"min_ratio": 4.0, "max_ratio": null, "multiplier": 2.5}
+    ]',
+    
+    is_active           BOOLEAN DEFAULT TRUE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
 -- ============================================================================
 -- RIDERS TABLE
 -- ============================================================================
 CREATE TABLE riders (
-    rider_id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name            VARCHAR(255) NOT NULL,
-    email           VARCHAR(255) UNIQUE NOT NULL,
-    phone           VARCHAR(20) UNIQUE NOT NULL,
-    profile_photo   VARCHAR(500),
-    payment_methods JSONB DEFAULT '[]',  -- [{type: 'card', last4: '1234', stripe_customer_id: 'cus_xxx'}]
-    default_payment_method_id VARCHAR(100),
-    avg_rating      DECIMAL(3,2) DEFAULT 5.00 CHECK (avg_rating >= 1.00 AND avg_rating <= 5.00),
-    total_trips     INT DEFAULT 0,
-    total_ratings   INT DEFAULT 0,
-    is_active       BOOLEAN DEFAULT TRUE,
-    is_verified     BOOLEAN DEFAULT FALSE,
-    language        VARCHAR(10) DEFAULT 'en',
-    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    rider_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    phone             VARCHAR(20) UNIQUE NOT NULL,
+    email             VARCHAR(255) UNIQUE,
+    name              VARCHAR(255),
+    profile_photo     VARCHAR(500),
+    
+    -- Ratings
+    avg_rating        DECIMAL(3,2) DEFAULT 5.00 CHECK (avg_rating >= 1.00 AND avg_rating <= 5.00),
+    total_trips       INT DEFAULT 0,
+    total_ratings     INT DEFAULT 0,
+    
+    -- Wallet
+    wallet_balance    DECIMAL(10,2) DEFAULT 0.00,
+    
+    -- Referral
+    referral_code     VARCHAR(20) UNIQUE,
+    referred_by       UUID REFERENCES riders(rider_id),
+    
+    -- Status
+    is_active         BOOLEAN DEFAULT TRUE,
+    is_verified       BOOLEAN DEFAULT FALSE,
+    is_blocked        BOOLEAN DEFAULT FALSE,
+    blocked_reason    VARCHAR(255),
+    
+    -- Preferences
+    language          VARCHAR(10) DEFAULT 'en',
+    default_payment_method VARCHAR(50),
+    
+    -- Timestamps
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_ride_at      TIMESTAMP WITH TIME ZONE
 );
 
-CREATE INDEX idx_riders_email ON riders(email);
 CREATE INDEX idx_riders_phone ON riders(phone);
+CREATE INDEX idx_riders_email ON riders(email);
 CREATE INDEX idx_riders_active ON riders(is_active) WHERE is_active = TRUE;
+CREATE INDEX idx_riders_referral ON riders(referral_code);
+
+-- ============================================================================
+-- RIDER WALLET TRANSACTIONS TABLE
+-- ============================================================================
+CREATE TABLE rider_wallet_transactions (
+    txn_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
+    
+    -- Transaction Details
+    amount            DECIMAL(10,2) NOT NULL,
+    type              VARCHAR(20) NOT NULL CHECK (type IN ('CREDIT', 'DEBIT')),
+    category          VARCHAR(50) NOT NULL,  -- TOP_UP, RIDE_PAYMENT, REFUND, CASHBACK, REFERRAL_BONUS, PROMO_CREDIT
+    
+    -- Balance Tracking
+    balance_before    DECIMAL(10,2) NOT NULL,
+    balance_after     DECIMAL(10,2) NOT NULL,
+    
+    -- References
+    trip_id           UUID,
+    payment_id        UUID,
+    reference_id      VARCHAR(255),  -- External reference (payment gateway, etc.)
+    
+    -- Metadata
+    description       VARCHAR(500),
+    metadata          JSONB,
+    
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_rider_wallet_txn_rider ON rider_wallet_transactions(rider_id, created_at DESC);
+CREATE INDEX idx_rider_wallet_txn_trip ON rider_wallet_transactions(trip_id) WHERE trip_id IS NOT NULL;
+
+-- ============================================================================
+-- RIDER PAYMENT METHODS TABLE
+-- ============================================================================
+CREATE TABLE rider_payment_methods (
+    method_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
+    
+    -- Method Details
+    type              payment_method_type NOT NULL,
+    is_default        BOOLEAN DEFAULT FALSE,
+    
+    -- Card Details (tokenized/encrypted)
+    card_last_four    VARCHAR(4),
+    card_brand        VARCHAR(20),  -- VISA, MASTERCARD, RUPAY
+    card_expiry_month INT,
+    card_expiry_year  INT,
+    
+    -- UPI Details
+    upi_id            VARCHAR(100),
+    
+    -- External References
+    stripe_payment_method_id VARCHAR(255),
+    stripe_customer_id       VARCHAR(255),
+    razorpay_token           VARCHAR(255),
+    
+    -- Status
+    is_active         BOOLEAN DEFAULT TRUE,
+    verified_at       TIMESTAMP WITH TIME ZONE,
+    
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_rider_payment_methods_rider ON rider_payment_methods(rider_id);
+
+-- ============================================================================
+-- SAVED PLACES TABLE
+-- ============================================================================
+CREATE TABLE saved_places (
+    place_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
+    
+    name              VARCHAR(100) NOT NULL,  -- "Home", "Work", etc.
+    place_type        VARCHAR(20) DEFAULT 'OTHER' CHECK (place_type IN ('HOME', 'WORK', 'OTHER')),
+    address           VARCHAR(500) NOT NULL,
+    location          GEOGRAPHY(Point, 4326) NOT NULL,
+    
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_saved_places_rider ON saved_places(rider_id);
 
 -- ============================================================================
 -- DRIVERS TABLE
 -- ============================================================================
-CREATE TYPE driver_status AS ENUM ('AVAILABLE', 'BUSY', 'OFFLINE', 'IN_TRIP');
-CREATE TYPE vehicle_type AS ENUM ('sedan', 'suv', 'bike', 'auto', 'pool');
-
 CREATE TABLE drivers (
     driver_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    phone             VARCHAR(20) UNIQUE NOT NULL,
+    email             VARCHAR(255),
     name              VARCHAR(255) NOT NULL,
-    email             VARCHAR(255) UNIQUE NOT NULL,
-    phone             VARCHAR(20) NOT NULL,
     profile_photo     VARCHAR(500),
+    date_of_birth     DATE,
+    gender            VARCHAR(10),
+    
+    -- City Assignment
+    city_id           UUID REFERENCES cities(city_id),
     
     -- Vehicle Details
     vehicle_type      vehicle_type NOT NULL,
-    vehicle_model     VARCHAR(100),           -- e.g., 'Toyota Camry 2020'
+    vehicle_make      VARCHAR(50),            -- Toyota, Honda, etc.
+    vehicle_model     VARCHAR(100),           -- Camry, City, etc.
+    vehicle_year      INT,
     vehicle_color     VARCHAR(50),
     license_plate     VARCHAR(20) NOT NULL,
-    vehicle_photo     VARCHAR(500),
+    vehicle_photos    VARCHAR[] DEFAULT '{}',
     
-    -- Status & Current Trip
+    -- Operational Status
     status            driver_status DEFAULT 'OFFLINE',
-    current_trip_id   UUID,                   -- FK added after trips table
+    is_online         BOOLEAN DEFAULT FALSE,
     current_location  GEOGRAPHY(Point, 4326),
+    current_trip_id   UUID,
+    last_location_update TIMESTAMP WITH TIME ZONE,
     
-    -- Ratings & Stats
+    -- Approval Status
+    application_status VARCHAR(30) DEFAULT 'PENDING' CHECK (application_status IN (
+        'PENDING', 'DOCUMENTS_UNDER_REVIEW', 'DOCUMENTS_REJECTED', 
+        'BACKGROUND_CHECK', 'TRAINING_PENDING', 'APPROVED', 'SUSPENDED', 'TERMINATED'
+    )),
+    is_verified       BOOLEAN DEFAULT FALSE,
+    is_active         BOOLEAN DEFAULT TRUE,
+    approved_at       TIMESTAMP WITH TIME ZONE,
+    suspended_reason  VARCHAR(255),
+    
+    -- Ratings & Performance
     avg_rating        DECIMAL(3,2) DEFAULT 5.00 CHECK (avg_rating >= 1.00 AND avg_rating <= 5.00),
     total_trips       INT DEFAULT 0,
     total_ratings     INT DEFAULT 0,
-    acceptance_rate   DECIMAL(5,2) DEFAULT 100.00 CHECK (acceptance_rate >= 0 AND acceptance_rate <= 100),
-    cancellation_rate DECIMAL(5,2) DEFAULT 0.00 CHECK (cancellation_rate >= 0 AND cancellation_rate <= 100),
+    acceptance_rate   DECIMAL(5,2) DEFAULT 100.00,
+    cancellation_rate DECIMAL(5,2) DEFAULT 0.00,
     
-    -- Documents & Verification
-    is_verified       BOOLEAN DEFAULT FALSE,
-    is_active         BOOLEAN DEFAULT TRUE,
-    driver_license_number VARCHAR(50),
-    driver_license_expiry DATE,
-    insurance_number  VARCHAR(50),
-    insurance_expiry  DATE,
+    -- Documents (Reference IDs - actual docs in separate table)
+    license_number    VARCHAR(50),
+    license_expiry    DATE,
     
-    -- Activity Tracking
+    -- Preferences
+    language          VARCHAR(10) DEFAULT 'en',
+    auto_accept_rides BOOLEAN DEFAULT FALSE,
+    
+    -- Activity
     last_online_at    TIMESTAMP WITH TIME ZONE,
-    last_location_update TIMESTAMP WITH TIME ZONE,
     
     -- Timestamps
     created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_drivers_phone ON drivers(phone);
 CREATE INDEX idx_drivers_status ON drivers(status);
-CREATE INDEX idx_drivers_vehicle_type ON drivers(vehicle_type);
-CREATE INDEX idx_drivers_current_trip ON drivers(current_trip_id);
 CREATE INDEX idx_drivers_location ON drivers USING GIST (current_location);
-CREATE INDEX idx_drivers_active_available ON drivers(status) WHERE is_active = TRUE AND status = 'AVAILABLE';
+CREATE INDEX idx_drivers_online ON drivers(is_online, status) WHERE is_online = TRUE AND status = 'AVAILABLE';
+CREATE INDEX idx_drivers_city ON drivers(city_id);
+CREATE INDEX idx_drivers_application_status ON drivers(application_status);
 
 -- ============================================================================
--- TRIPS/RIDES TABLE
+-- DRIVER DOCUMENTS TABLE
 -- ============================================================================
-CREATE TYPE trip_status AS ENUM (
-    'PENDING',           -- Ride requested, waiting for driver match
-    'MATCHED',           -- Driver assigned and accepted
-    'DRIVER_ARRIVED',    -- Driver reached pickup location
-    'IN_PROGRESS',       -- Trip started
-    'COMPLETED',         -- Trip completed successfully
-    'CANCELLED_BY_RIDER',
-    'CANCELLED_BY_DRIVER',
-    'NO_DRIVERS_AVAILABLE'
+CREATE TABLE driver_documents (
+    document_id       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    driver_id         UUID NOT NULL REFERENCES drivers(driver_id),
+    
+    -- Document Details
+    document_type     VARCHAR(50) NOT NULL,  -- DRIVING_LICENSE, RC, INSURANCE, PAN, AADHAAR, PHOTO, VEHICLE_FRONT, etc.
+    document_number   VARCHAR(100),
+    document_url      VARCHAR(500) NOT NULL,  -- S3 URL
+    expiry_date       DATE,
+    
+    -- Verification
+    status            driver_document_status DEFAULT 'PENDING',
+    verified_by       UUID,  -- Admin who verified
+    verified_at       TIMESTAMP WITH TIME ZONE,
+    rejection_reason  VARCHAR(255),
+    
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TYPE payment_status AS ENUM ('PENDING', 'COMPLETED', 'FAILED', 'REFUNDED');
+CREATE INDEX idx_driver_documents_driver ON driver_documents(driver_id);
+CREATE INDEX idx_driver_documents_status ON driver_documents(status);
 
-CREATE TABLE trips (
-    trip_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+-- ============================================================================
+-- DRIVER WALLET / BALANCE TABLE
+-- ============================================================================
+CREATE TABLE driver_wallet (
+    driver_id             UUID PRIMARY KEY REFERENCES drivers(driver_id),
     
-    -- Participants
-    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
-    driver_id         UUID REFERENCES drivers(driver_id),
+    -- Balance Components
+    available_balance     DECIMAL(10,2) DEFAULT 0.00,  -- Ready for payout
+    pending_balance       DECIMAL(10,2) DEFAULT 0.00,  -- Being processed
     
-    -- Locations (PostGIS geography for accurate distance calculations)
-    pickup_location   GEOGRAPHY(Point, 4326) NOT NULL,
-    pickup_address    VARCHAR(500),
-    drop_location     GEOGRAPHY(Point, 4326) NOT NULL,
-    drop_address      VARCHAR(500),
+    -- Cash Commission Tracking (VERY IMPORTANT FOR UBER MODEL)
+    cash_collected        DECIMAL(10,2) DEFAULT 0.00,  -- Total cash from riders
+    cash_owed_to_platform DECIMAL(10,2) DEFAULT 0.00,  -- Commission owed from cash trips
     
-    -- Actual route (for completed trips)
-    actual_route      GEOGRAPHY(LineString, 4326),
+    -- Lifetime Stats
+    total_earnings        DECIMAL(12,2) DEFAULT 0.00,
+    total_payouts         DECIMAL(12,2) DEFAULT 0.00,
+    total_commission_paid DECIMAL(12,2) DEFAULT 0.00,
+    total_tips            DECIMAL(12,2) DEFAULT 0.00,
+    total_bonuses         DECIMAL(12,2) DEFAULT 0.00,
     
-    -- Trip Details
-    status            trip_status DEFAULT 'PENDING',
-    vehicle_type      vehicle_type NOT NULL,
+    -- Bank Account Details
+    bank_account_name     VARCHAR(255),
+    bank_account_number   VARCHAR(50),
+    bank_ifsc_code        VARCHAR(20),
+    bank_name             VARCHAR(100),
+    bank_verified         BOOLEAN DEFAULT FALSE,
     
-    -- Fare Information
-    estimated_fare    DECIMAL(10,2),
-    actual_fare       DECIMAL(10,2),
-    base_fare         DECIMAL(10,2),
-    distance_fare     DECIMAL(10,2),
-    time_fare         DECIMAL(10,2),
-    surge_multiplier  DECIMAL(3,2) DEFAULT 1.00,
-    currency          VARCHAR(3) DEFAULT 'USD',
+    -- UPI for instant payout
+    upi_id                VARCHAR(100),
     
-    -- Trip Metrics
-    estimated_distance_km DECIMAL(10,2),
-    actual_distance_km    DECIMAL(10,2),
-    estimated_duration_min INT,
-    actual_duration_min    INT,
+    -- Settings
+    auto_payout_enabled   BOOLEAN DEFAULT TRUE,
+    min_payout_amount     DECIMAL(10,2) DEFAULT 100.00,
     
-    -- Payment
-    payment_status    payment_status DEFAULT 'PENDING',
-    payment_method    VARCHAR(20),
+    created_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================================================
+-- DRIVER EARNINGS TABLE (Per-Trip Earnings)
+-- ============================================================================
+CREATE TABLE driver_earnings (
+    earning_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    driver_id             UUID NOT NULL REFERENCES drivers(driver_id),
+    trip_id               UUID NOT NULL,
     
-    -- Timestamps
-    requested_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    matched_at        TIMESTAMP WITH TIME ZONE,
-    driver_arrived_at TIMESTAMP WITH TIME ZONE,
-    start_time        TIMESTAMP WITH TIME ZONE,
-    end_time          TIMESTAMP WITH TIME ZONE,
-    cancelled_at      TIMESTAMP WITH TIME ZONE,
+    -- Trip Fare Breakdown
+    trip_fare             DECIMAL(10,2) NOT NULL,       -- Total fare charged to rider
+    base_fare             DECIMAL(10,2) DEFAULT 0,
+    distance_fare         DECIMAL(10,2) DEFAULT 0,
+    time_fare             DECIMAL(10,2) DEFAULT 0,
+    wait_fare             DECIMAL(10,2) DEFAULT 0,
+    surge_fare            DECIMAL(10,2) DEFAULT 0,      -- Extra from surge
+    toll_amount           DECIMAL(10,2) DEFAULT 0,
     
-    -- Cancellation Details
-    cancellation_reason VARCHAR(255),
-    cancellation_fee   DECIMAL(10,2) DEFAULT 0,
+    -- Platform Commission
+    commission_rate       DECIMAL(5,2) NOT NULL,        -- e.g., 20.00 for 20%
+    commission_amount     DECIMAL(10,2) NOT NULL,       -- Platform's cut
+    
+    -- Driver Earnings
+    driver_earnings       DECIMAL(10,2) NOT NULL,       -- trip_fare - commission
+    tip_amount            DECIMAL(10,2) DEFAULT 0,      -- 100% to driver
+    bonus_amount          DECIMAL(10,2) DEFAULT 0,      -- Incentives
+    total_earnings        DECIMAL(10,2) NOT NULL,       -- driver_earnings + tip + bonus
+    
+    -- Payment Type
+    payment_type          payment_method_type NOT NULL,
+    
+    -- Settlement Status (Important for CASH payments)
+    is_cash_trip          BOOLEAN DEFAULT FALSE,
+    cash_collected        DECIMAL(10,2) DEFAULT 0,      -- If cash, full fare
+    cash_commission_owed  DECIMAL(10,2) DEFAULT 0,      -- If cash, commission owed
+    is_settled            BOOLEAN DEFAULT FALSE,        -- Cash commission collected?
+    settled_at            TIMESTAMP WITH TIME ZONE,
+    settled_in_payout_id  UUID,
+    
+    -- Digital Payment Status
+    added_to_wallet       BOOLEAN DEFAULT FALSE,
+    added_to_wallet_at    TIMESTAMP WITH TIME ZONE,
+    
+    created_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_driver_earnings_driver ON driver_earnings(driver_id, created_at DESC);
+CREATE INDEX idx_driver_earnings_trip ON driver_earnings(trip_id);
+CREATE INDEX idx_driver_earnings_unsettled ON driver_earnings(driver_id, is_settled) WHERE is_cash_trip = TRUE AND is_settled = FALSE;
+CREATE INDEX idx_driver_earnings_not_in_wallet ON driver_earnings(driver_id, added_to_wallet) WHERE is_cash_trip = FALSE AND added_to_wallet = FALSE;
+
+-- ============================================================================
+-- DRIVER WALLET TRANSACTIONS TABLE
+-- ============================================================================
+CREATE TABLE driver_wallet_transactions (
+    txn_id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
+    
+    -- Transaction Details
+    amount              DECIMAL(10,2) NOT NULL,
+    type                VARCHAR(20) NOT NULL CHECK (type IN ('CREDIT', 'DEBIT')),
+    category            VARCHAR(50) NOT NULL,
+    -- Categories: TRIP_EARNING, TIP, BONUS, INCENTIVE, PAYOUT, CASH_COMMISSION_DEDUCTION, 
+    --             ADJUSTMENT, REFERRAL_BONUS, INSTANT_PAYOUT_FEE
+    
+    -- Balance Tracking
+    balance_before      DECIMAL(10,2) NOT NULL,
+    balance_after       DECIMAL(10,2) NOT NULL,
+    
+    -- References
+    trip_id             UUID,
+    earning_id          UUID REFERENCES driver_earnings(earning_id),
+    payout_id           UUID,
     
     -- Metadata
-    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    description         VARCHAR(500),
+    metadata            JSONB,
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Add foreign key to drivers table (circular reference)
+CREATE INDEX idx_driver_wallet_txn_driver ON driver_wallet_transactions(driver_id, created_at DESC);
+
+-- ============================================================================
+-- DRIVER PAYOUTS TABLE
+-- ============================================================================
+CREATE TABLE driver_payouts (
+    payout_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
+    
+    -- Payout Type
+    payout_type         VARCHAR(20) NOT NULL CHECK (payout_type IN ('WEEKLY', 'INSTANT', 'MANUAL')),
+    
+    -- Period (for weekly payouts)
+    period_start        DATE,
+    period_end          DATE,
+    
+    -- Earnings Breakdown
+    total_trips         INT DEFAULT 0,
+    trip_earnings       DECIMAL(10,2) DEFAULT 0,
+    tip_earnings        DECIMAL(10,2) DEFAULT 0,
+    bonus_earnings      DECIMAL(10,2) DEFAULT 0,
+    gross_amount        DECIMAL(10,2) NOT NULL,         -- Total before deductions
+    
+    -- Deductions
+    cash_commission_deducted DECIMAL(10,2) DEFAULT 0,   -- Commission from cash trips
+    instant_payout_fee  DECIMAL(10,2) DEFAULT 0,        -- Fee for instant payout
+    other_deductions    DECIMAL(10,2) DEFAULT 0,
+    deduction_notes     VARCHAR(500),
+    
+    -- Net Payout
+    net_amount          DECIMAL(10,2) NOT NULL,         -- Final amount to bank
+    currency            VARCHAR(10) DEFAULT 'INR',
+    
+    -- Status
+    status              payout_status DEFAULT 'PENDING',
+    failure_reason      VARCHAR(255),
+    retry_count         INT DEFAULT 0,
+    
+    -- Bank Transfer Details
+    bank_reference      VARCHAR(255),
+    bank_account_last4  VARCHAR(4),
+    transfer_mode       VARCHAR(20),  -- NEFT, IMPS, UPI
+    
+    -- Timestamps
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    processing_at       TIMESTAMP WITH TIME ZONE,
+    completed_at        TIMESTAMP WITH TIME ZONE,
+    
+    -- Admin
+    created_by          UUID,
+    notes               VARCHAR(500)
+);
+
+CREATE INDEX idx_driver_payouts_driver ON driver_payouts(driver_id, created_at DESC);
+CREATE INDEX idx_driver_payouts_status ON driver_payouts(status);
+CREATE INDEX idx_driver_payouts_period ON driver_payouts(period_start, period_end);
+
+-- ============================================================================
+-- TRIPS TABLE
+-- ============================================================================
+CREATE TABLE trips (
+    trip_id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Participants
+    rider_id            UUID NOT NULL REFERENCES riders(rider_id),
+    driver_id           UUID REFERENCES drivers(driver_id),
+    
+    -- City
+    city_id             UUID REFERENCES cities(city_id),
+    
+    -- Locations
+    pickup_location     GEOGRAPHY(Point, 4326) NOT NULL,
+    pickup_address      VARCHAR(500),
+    drop_location       GEOGRAPHY(Point, 4326) NOT NULL,
+    drop_address        VARCHAR(500),
+    actual_route        GEOGRAPHY(LineString, 4326),
+    
+    -- Trip Details
+    status              trip_status DEFAULT 'PENDING',
+    vehicle_type        vehicle_type NOT NULL,
+    is_scheduled        BOOLEAN DEFAULT FALSE,
+    scheduled_at        TIMESTAMP WITH TIME ZONE,
+    
+    -- Fare Estimation
+    estimated_fare      DECIMAL(10,2),
+    estimated_distance_km DECIMAL(10,2),
+    estimated_duration_min INT,
+    
+    -- Actual Fare Breakdown (Final)
+    actual_fare         DECIMAL(10,2),
+    base_fare           DECIMAL(10,2),
+    distance_fare       DECIMAL(10,2),
+    time_fare           DECIMAL(10,2),
+    wait_fare           DECIMAL(10,2) DEFAULT 0,
+    surge_multiplier    DECIMAL(3,2) DEFAULT 1.00,
+    surge_fare          DECIMAL(10,2) DEFAULT 0,
+    toll_amount         DECIMAL(10,2) DEFAULT 0,
+    booking_fee         DECIMAL(10,2) DEFAULT 0,
+    taxes               DECIMAL(10,2) DEFAULT 0,
+    
+    -- Discounts
+    discount_amount     DECIMAL(10,2) DEFAULT 0,
+    promo_code          VARCHAR(50),
+    
+    -- Final Amount
+    final_amount        DECIMAL(10,2),  -- What rider pays
+    
+    -- Actual Metrics
+    actual_distance_km  DECIMAL(10,2),
+    actual_duration_min INT,
+    wait_time_minutes   INT DEFAULT 0,
+    
+    -- Payment
+    payment_method      payment_method_type,
+    payment_status      payment_status DEFAULT 'PENDING',
+    
+    -- Timestamps
+    requested_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    matched_at          TIMESTAMP WITH TIME ZONE,
+    driver_arrived_at   TIMESTAMP WITH TIME ZONE,
+    started_at          TIMESTAMP WITH TIME ZONE,
+    completed_at        TIMESTAMP WITH TIME ZONE,
+    cancelled_at        TIMESTAMP WITH TIME ZONE,
+    
+    -- Cancellation
+    cancellation_reason VARCHAR(255),
+    cancelled_by        VARCHAR(20), -- 'rider', 'driver', 'system'
+    cancellation_fee    DECIMAL(10,2) DEFAULT 0,
+    
+    -- OTP Verification (for rider safety)
+    ride_otp            VARCHAR(6),
+    otp_verified        BOOLEAN DEFAULT FALSE,
+    
+    -- Metadata
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Add FK to drivers table
 ALTER TABLE drivers ADD CONSTRAINT fk_driver_current_trip 
     FOREIGN KEY (current_trip_id) REFERENCES trips(trip_id);
 
--- Indexes for trips
-CREATE INDEX idx_trips_rider ON trips(rider_id, created_at DESC);
-CREATE INDEX idx_trips_driver ON trips(driver_id, created_at DESC);
+CREATE INDEX idx_trips_rider ON trips(rider_id, requested_at DESC);
+CREATE INDEX idx_trips_driver ON trips(driver_id, requested_at DESC);
 CREATE INDEX idx_trips_status ON trips(status);
-CREATE INDEX idx_trips_pending_location ON trips USING GIST (pickup_location) WHERE status = 'PENDING';
-CREATE INDEX idx_trips_in_progress ON trips(status) WHERE status = 'IN_PROGRESS';
-CREATE INDEX idx_trips_requested_at ON trips(requested_at DESC);
-
--- ============================================================================
--- RIDE REQUESTS TABLE (for pending requests before driver assignment)
--- ============================================================================
-CREATE TABLE ride_requests (
-    request_id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
-    
-    -- Locations
-    pickup_location   GEOGRAPHY(Point, 4326) NOT NULL,
-    pickup_address    VARCHAR(500),
-    drop_location     GEOGRAPHY(Point, 4326) NOT NULL,
-    drop_address      VARCHAR(500),
-    
-    -- Request Details
-    vehicle_type      vehicle_type NOT NULL,
-    estimated_fare    DECIMAL(10,2),
-    surge_multiplier  DECIMAL(3,2) DEFAULT 1.00,
-    
-    -- Status
-    status            VARCHAR(20) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'MATCHED', 'EXPIRED', 'CANCELLED')),
-    
-    -- Matching attempts
-    drivers_notified  UUID[] DEFAULT '{}',
-    drivers_declined  UUID[] DEFAULT '{}',
-    match_attempts    INT DEFAULT 0,
-    
-    -- Timestamps
-    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    expires_at        TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP + INTERVAL '10 minutes'),
-    matched_at        TIMESTAMP WITH TIME ZONE
-);
-
-CREATE INDEX idx_ride_requests_status ON ride_requests(status);
-CREATE INDEX idx_ride_requests_rider ON ride_requests(rider_id);
-CREATE INDEX idx_ride_requests_pending ON ride_requests USING GIST (pickup_location) WHERE status = 'PENDING';
-
--- ============================================================================
--- RATINGS TABLE
--- ============================================================================
-CREATE TABLE ratings (
-    rating_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    trip_id           UUID UNIQUE NOT NULL REFERENCES trips(trip_id),
-    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
-    driver_id         UUID NOT NULL REFERENCES drivers(driver_id),
-    
-    -- Ratings (1-5 stars)
-    driver_rating     INT CHECK (driver_rating BETWEEN 1 AND 5),   -- Rider rates driver
-    rider_rating      INT CHECK (rider_rating BETWEEN 1 AND 5),    -- Driver rates rider
-    
-    -- Feedback
-    rider_feedback    TEXT,         -- Rider's feedback about driver
-    driver_feedback   TEXT,         -- Driver's feedback about rider
-    
-    -- Rating Categories (optional detailed ratings)
-    driver_cleanliness_rating    INT CHECK (driver_cleanliness_rating BETWEEN 1 AND 5),
-    driver_safety_rating         INT CHECK (driver_safety_rating BETWEEN 1 AND 5),
-    driver_navigation_rating     INT CHECK (driver_navigation_rating BETWEEN 1 AND 5),
-    
-    -- Metadata
-    driver_rated_at   TIMESTAMP WITH TIME ZONE,
-    rider_rated_at    TIMESTAMP WITH TIME ZONE,
-    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Note: Anonymous - drivers see aggregated ratings, not individual rider identity
-CREATE INDEX idx_ratings_driver ON ratings(driver_id);
-CREATE INDEX idx_ratings_rider ON ratings(rider_id);
-CREATE INDEX idx_ratings_trip ON ratings(trip_id);
+CREATE INDEX idx_trips_pending ON trips USING GIST (pickup_location) WHERE status = 'PENDING';
+CREATE INDEX idx_trips_city ON trips(city_id, requested_at DESC);
 
 -- ============================================================================
 -- PAYMENTS TABLE
 -- ============================================================================
-CREATE TYPE payment_method_type AS ENUM ('card', 'wallet', 'cash', 'upi', 'net_banking');
-
 CREATE TABLE payments (
     payment_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    trip_id             UUID UNIQUE NOT NULL REFERENCES trips(trip_id),
+    trip_id             UUID NOT NULL REFERENCES trips(trip_id),
     rider_id            UUID NOT NULL REFERENCES riders(rider_id),
+    driver_id           UUID REFERENCES drivers(driver_id),
     
-    -- Amount
+    -- Amount Details
     amount              DECIMAL(10,2) NOT NULL,
-    currency            VARCHAR(3) DEFAULT 'USD',
+    currency            VARCHAR(10) DEFAULT 'INR',
     
-    -- Payment Details
+    -- Payment Method
     payment_method      payment_method_type NOT NULL,
-    stripe_payment_id   VARCHAR(255),         -- External payment gateway reference
-    stripe_customer_id  VARCHAR(255),
+    payment_method_id   UUID REFERENCES rider_payment_methods(method_id),
     
     -- Breakdown
-    base_fare           DECIMAL(10,2),
-    distance_fare       DECIMAL(10,2),
-    time_fare           DECIMAL(10,2),
-    surge_fare          DECIMAL(10,2),
+    trip_fare           DECIMAL(10,2),
+    surge_amount        DECIMAL(10,2) DEFAULT 0,
+    toll_amount         DECIMAL(10,2) DEFAULT 0,
+    booking_fee         DECIMAL(10,2) DEFAULT 0,
     taxes               DECIMAL(10,2) DEFAULT 0,
     discount            DECIMAL(10,2) DEFAULT 0,
-    tip                 DECIMAL(10,2) DEFAULT 0,
+    wallet_deducted     DECIMAL(10,2) DEFAULT 0,  -- Portion paid from wallet
+    card_charged        DECIMAL(10,2) DEFAULT 0,  -- Portion charged to card
+    
+    -- Tip (added post-trip)
+    tip_amount          DECIMAL(10,2) DEFAULT 0,
+    tip_paid_at         TIMESTAMP WITH TIME ZONE,
     
     -- Status
     status              payment_status DEFAULT 'PENDING',
     failure_reason      VARCHAR(255),
     
-    -- Refund info
+    -- Gateway Details
+    gateway             VARCHAR(50),          -- stripe, razorpay
+    gateway_payment_id  VARCHAR(255),
+    gateway_order_id    VARCHAR(255),
+    gateway_response    JSONB,
+    
+    -- Authorization (pre-auth before trip)
+    authorization_id    VARCHAR(255),
+    authorized_amount   DECIMAL(10,2),
+    authorized_at       TIMESTAMP WITH TIME ZONE,
+    
+    -- Capture (actual charge after trip)
+    captured_at         TIMESTAMP WITH TIME ZONE,
+    
+    -- Refund
     refund_amount       DECIMAL(10,2),
     refund_reason       VARCHAR(255),
+    refund_id           VARCHAR(255),
     refunded_at         TIMESTAMP WITH TIME ZONE,
     
     -- Timestamps
@@ -285,255 +675,433 @@ CREATE TABLE payments (
 CREATE INDEX idx_payments_trip ON payments(trip_id);
 CREATE INDEX idx_payments_rider ON payments(rider_id);
 CREATE INDEX idx_payments_status ON payments(status);
-CREATE INDEX idx_payments_created ON payments(created_at DESC);
+CREATE INDEX idx_payments_gateway ON payments(gateway, gateway_payment_id);
 
 -- ============================================================================
--- DRIVER PAYOUTS TABLE
+-- RATINGS TABLE
 -- ============================================================================
-CREATE TABLE driver_payouts (
-    payout_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+CREATE TABLE ratings (
+    rating_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    trip_id             UUID UNIQUE NOT NULL REFERENCES trips(trip_id),
+    rider_id            UUID NOT NULL REFERENCES riders(rider_id),
     driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
     
-    -- Payout Amount
-    amount              DECIMAL(10,2) NOT NULL,
-    currency            VARCHAR(3) DEFAULT 'USD',
+    -- Ratings (1-5 stars)
+    driver_rating       INT CHECK (driver_rating BETWEEN 1 AND 5),
+    rider_rating        INT CHECK (rider_rating BETWEEN 1 AND 5),
     
-    -- Period
-    period_start        DATE NOT NULL,
-    period_end          DATE NOT NULL,
+    -- Feedback
+    rider_feedback      TEXT,
+    driver_feedback     TEXT,
     
-    -- Details
-    total_trips         INT DEFAULT 0,
-    total_earnings      DECIMAL(10,2),
-    platform_fee        DECIMAL(10,2),      -- Platform's commission
-    bonuses             DECIMAL(10,2) DEFAULT 0,
+    -- Feedback Tags (predefined)
+    rider_feedback_tags VARCHAR[] DEFAULT '{}',  -- ['Clean Car', 'Good Navigation', 'Professional']
+    driver_feedback_tags VARCHAR[] DEFAULT '{}', -- ['Polite', 'Ready on Time']
     
-    -- Status
-    status              VARCHAR(20) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')),
+    -- Timestamps
+    driver_rated_at     TIMESTAMP WITH TIME ZONE,
+    rider_rated_at      TIMESTAMP WITH TIME ZONE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_ratings_driver ON ratings(driver_id);
+CREATE INDEX idx_ratings_rider ON ratings(rider_id);
+
+-- ============================================================================
+-- RIDE REQUESTS TABLE (Active matching)
+-- ============================================================================
+CREATE TABLE ride_requests (
+    request_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    rider_id            UUID NOT NULL REFERENCES riders(rider_id),
+    trip_id             UUID REFERENCES trips(trip_id),
     
-    -- Bank Details (reference)
-    bank_account_id     VARCHAR(100),
+    -- Request Details
+    pickup_location     GEOGRAPHY(Point, 4326) NOT NULL,
+    pickup_address      VARCHAR(500),
+    drop_location       GEOGRAPHY(Point, 4326) NOT NULL,
+    drop_address        VARCHAR(500),
+    vehicle_type        vehicle_type NOT NULL,
+    
+    -- Fare
+    estimated_fare      DECIMAL(10,2),
+    surge_multiplier    DECIMAL(3,2) DEFAULT 1.00,
+    
+    -- Matching Status
+    status              VARCHAR(20) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'MATCHING', 'MATCHED', 'EXPIRED', 'CANCELLED')),
+    
+    -- Driver Matching Attempts
+    drivers_notified    UUID[] DEFAULT '{}',
+    drivers_declined    UUID[] DEFAULT '{}',
+    current_driver_id   UUID REFERENCES drivers(driver_id),
+    match_attempts      INT DEFAULT 0,
+    max_radius_km       DECIMAL(5,2) DEFAULT 5.0,
     
     -- Timestamps
     created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    processed_at        TIMESTAMP WITH TIME ZONE
+    expires_at          TIMESTAMP WITH TIME ZONE,
+    matched_at          TIMESTAMP WITH TIME ZONE
 );
 
-CREATE INDEX idx_driver_payouts_driver ON driver_payouts(driver_id);
-CREATE INDEX idx_driver_payouts_status ON driver_payouts(status);
-
--- ============================================================================
--- LOCATION HISTORY TABLE (for analytics & fraud detection)
--- ============================================================================
-CREATE TABLE location_history (
-    id              BIGSERIAL PRIMARY KEY,
-    driver_id       UUID NOT NULL REFERENCES drivers(driver_id),
-    trip_id         UUID REFERENCES trips(trip_id),
-    
-    -- Location
-    location        GEOGRAPHY(Point, 4326) NOT NULL,
-    
-    -- Metadata
-    speed           DECIMAL(5,2),           -- km/h
-    accuracy        DECIMAL(5,2),           -- meters
-    heading         DECIMAL(5,2),           -- degrees (0-360)
-    altitude        DECIMAL(8,2),           -- meters
-    
-    -- Timestamps
-    recorded_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Partition by month for better performance on historical data
-CREATE INDEX idx_location_history_driver ON location_history(driver_id, recorded_at DESC);
-CREATE INDEX idx_location_history_trip ON location_history(trip_id) WHERE trip_id IS NOT NULL;
-CREATE INDEX idx_location_history_recorded ON location_history(recorded_at DESC);
-
--- ============================================================================
--- SURGE PRICING TABLE (historical tracking)
--- ============================================================================
-CREATE TABLE surge_pricing (
-    id              BIGSERIAL PRIMARY KEY,
-    geohash         VARCHAR(12) NOT NULL,   -- Geohash of area
-    
-    -- Metrics
-    surge_multiplier DECIMAL(3,2) NOT NULL,
-    available_drivers INT,
-    pending_requests  INT,
-    demand_ratio      DECIMAL(5,2),
-    
-    -- Area Info
-    center_lat       DECIMAL(10,7),
-    center_lon       DECIMAL(10,7),
-    
-    -- Timestamps
-    calculated_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    valid_until      TIMESTAMP WITH TIME ZONE
-);
-
-CREATE INDEX idx_surge_pricing_geohash ON surge_pricing(geohash, calculated_at DESC);
-CREATE INDEX idx_surge_pricing_calculated ON surge_pricing(calculated_at DESC);
-
--- ============================================================================
--- FARE ESTIMATES TABLE (cache for fare estimates)
--- ============================================================================
-CREATE TABLE fare_estimates (
-    estimate_id       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
-    
-    -- Locations
-    pickup_location   GEOGRAPHY(Point, 4326) NOT NULL,
-    drop_location     GEOGRAPHY(Point, 4326) NOT NULL,
-    
-    -- Estimate Details
-    vehicle_type      vehicle_type NOT NULL,
-    estimated_fare    DECIMAL(10,2) NOT NULL,
-    base_fare         DECIMAL(10,2),
-    distance_fare     DECIMAL(10,2),
-    time_fare         DECIMAL(10,2),
-    surge_multiplier  DECIMAL(3,2) DEFAULT 1.00,
-    
-    -- Route Info
-    distance_km       DECIMAL(10,2),
-    duration_min      INT,
-    
-    -- Validity
-    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    expires_at        TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP + INTERVAL '5 minutes')
-);
-
-CREATE INDEX idx_fare_estimates_rider ON fare_estimates(rider_id);
-CREATE INDEX idx_fare_estimates_expiry ON fare_estimates(expires_at);
-
--- ============================================================================
--- DEVICE TOKENS TABLE (for push notifications)
--- ============================================================================
-CREATE TABLE device_tokens (
-    id              BIGSERIAL PRIMARY KEY,
-    user_id         UUID NOT NULL,
-    user_type       VARCHAR(10) NOT NULL CHECK (user_type IN ('rider', 'driver')),
-    
-    -- Device Info
-    device_token    VARCHAR(500) NOT NULL,
-    platform        VARCHAR(20) NOT NULL CHECK (platform IN ('ios', 'android', 'web')),
-    device_id       VARCHAR(255),
-    device_model    VARCHAR(100),
-    app_version     VARCHAR(20),
-    
-    -- Status
-    is_active       BOOLEAN DEFAULT TRUE,
-    
-    -- Timestamps
-    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_used_at    TIMESTAMP WITH TIME ZONE,
-    
-    UNIQUE(user_id, device_token)
-);
-
-CREATE INDEX idx_device_tokens_user ON device_tokens(user_id, user_type);
-CREATE INDEX idx_device_tokens_active ON device_tokens(user_id) WHERE is_active = TRUE;
-
--- ============================================================================
--- NOTIFICATIONS TABLE (notification history)
--- ============================================================================
-CREATE TABLE notifications (
-    notification_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id           UUID NOT NULL,
-    user_type         VARCHAR(10) NOT NULL CHECK (user_type IN ('rider', 'driver')),
-    
-    -- Notification Content
-    title             VARCHAR(255) NOT NULL,
-    body              TEXT NOT NULL,
-    data              JSONB,                  -- Additional data payload
-    
-    -- Reference
-    trip_id           UUID REFERENCES trips(trip_id),
-    notification_type VARCHAR(50) NOT NULL,   -- ride_matched, trip_started, payment_completed, etc.
-    
-    -- Delivery Status
-    status            VARCHAR(20) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SENT', 'DELIVERED', 'FAILED', 'READ')),
-    sent_at           TIMESTAMP WITH TIME ZONE,
-    delivered_at      TIMESTAMP WITH TIME ZONE,
-    read_at           TIMESTAMP WITH TIME ZONE,
-    
-    -- Timestamps
-    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_notifications_user ON notifications(user_id, user_type);
-CREATE INDEX idx_notifications_trip ON notifications(trip_id) WHERE trip_id IS NOT NULL;
-CREATE INDEX idx_notifications_created ON notifications(created_at DESC);
+CREATE INDEX idx_ride_requests_status ON ride_requests(status);
+CREATE INDEX idx_ride_requests_pending ON ride_requests USING GIST (pickup_location) WHERE status = 'PENDING';
 
 -- ============================================================================
 -- PROMO CODES TABLE
 -- ============================================================================
 CREATE TABLE promo_codes (
-    promo_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    code              VARCHAR(50) UNIQUE NOT NULL,
+    promo_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code                VARCHAR(50) UNIQUE NOT NULL,
+    description         VARCHAR(255),
     
     -- Discount Details
-    discount_type     VARCHAR(20) NOT NULL CHECK (discount_type IN ('percentage', 'fixed')),
-    discount_value    DECIMAL(10,2) NOT NULL,
-    max_discount      DECIMAL(10,2),          -- Max discount for percentage type
-    min_trip_amount   DECIMAL(10,2) DEFAULT 0,
+    discount_type       VARCHAR(20) NOT NULL CHECK (discount_type IN ('PERCENTAGE', 'FIXED')),
+    discount_value      DECIMAL(10,2) NOT NULL,
+    max_discount        DECIMAL(10,2),          -- Cap for percentage
+    min_trip_amount     DECIMAL(10,2) DEFAULT 0,
     
     -- Usage Limits
-    max_uses          INT,
-    max_uses_per_user INT DEFAULT 1,
-    current_uses      INT DEFAULT 0,
+    max_uses            INT,
+    max_uses_per_user   INT DEFAULT 1,
+    current_uses        INT DEFAULT 0,
     
     -- Validity
-    valid_from        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    valid_until       TIMESTAMP WITH TIME ZONE,
+    valid_from          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    valid_until         TIMESTAMP WITH TIME ZONE,
     
     -- Restrictions
-    vehicle_types     vehicle_type[],         -- NULL = all types
-    user_ids          UUID[],                  -- NULL = all users
-    first_trip_only   BOOLEAN DEFAULT FALSE,
+    vehicle_types       vehicle_type[] DEFAULT '{}',  -- Empty = all
+    city_ids            UUID[] DEFAULT '{}',
+    first_trip_only     BOOLEAN DEFAULT FALSE,
+    new_users_only      BOOLEAN DEFAULT FALSE,
     
     -- Status
-    is_active         BOOLEAN DEFAULT TRUE,
+    is_active           BOOLEAN DEFAULT TRUE,
     
-    -- Timestamps
-    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    -- Admin
+    created_by          UUID,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_promo_codes_code ON promo_codes(code);
 CREATE INDEX idx_promo_codes_active ON promo_codes(is_active, valid_until);
 
 -- ============================================================================
--- USER PROMO USAGE TABLE
+-- PROMO USAGE TABLE
 -- ============================================================================
 CREATE TABLE promo_usage (
-    id              BIGSERIAL PRIMARY KEY,
-    promo_id        UUID NOT NULL REFERENCES promo_codes(promo_id),
-    rider_id        UUID NOT NULL REFERENCES riders(rider_id),
-    trip_id         UUID REFERENCES trips(trip_id),
+    id                  BIGSERIAL PRIMARY KEY,
+    promo_id            UUID NOT NULL REFERENCES promo_codes(promo_id),
+    rider_id            UUID NOT NULL REFERENCES riders(rider_id),
+    trip_id             UUID REFERENCES trips(trip_id),
     
-    discount_applied DECIMAL(10,2),
+    discount_applied    DECIMAL(10,2),
     
-    used_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    used_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_promo_usage_rider ON promo_usage(rider_id);
 CREATE INDEX idx_promo_usage_promo ON promo_usage(promo_id);
 
 -- ============================================================================
--- AUDIT LOG TABLE (for tracking important changes)
+-- DRIVER INCENTIVES TABLE
 -- ============================================================================
-CREATE TABLE audit_log (
-    id              BIGSERIAL PRIMARY KEY,
-    table_name      VARCHAR(50) NOT NULL,
-    record_id       UUID NOT NULL,
-    action          VARCHAR(20) NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
-    old_values      JSONB,
-    new_values      JSONB,
-    changed_by      UUID,
-    changed_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE driver_incentives (
+    incentive_id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Targeting
+    city_id             UUID REFERENCES cities(city_id),
+    vehicle_types       vehicle_type[] DEFAULT '{}',
+    
+    -- Incentive Details
+    name                VARCHAR(100) NOT NULL,
+    description         VARCHAR(500),
+    type                VARCHAR(20) NOT NULL CHECK (type IN ('TRIP_COUNT', 'EARNINGS_TARGET', 'ACCEPTANCE_RATE', 'PEAK_HOURS')),
+    
+    -- Target & Reward
+    target_value        DECIMAL(10,2) NOT NULL,   -- e.g., 20 trips or ₹5000 earnings
+    bonus_amount        DECIMAL(10,2) NOT NULL,
+    
+    -- Validity
+    valid_from          TIMESTAMP WITH TIME ZONE NOT NULL,
+    valid_until         TIMESTAMP WITH TIME ZONE NOT NULL,
+    
+    -- Status
+    is_active           BOOLEAN DEFAULT TRUE,
+    
+    created_by          UUID,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_audit_log_table ON audit_log(table_name, record_id);
-CREATE INDEX idx_audit_log_changed_at ON audit_log(changed_at DESC);
+-- ============================================================================
+-- DRIVER INCENTIVE PROGRESS TABLE
+-- ============================================================================
+CREATE TABLE driver_incentive_progress (
+    id                  BIGSERIAL PRIMARY KEY,
+    driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
+    incentive_id        UUID NOT NULL REFERENCES driver_incentives(incentive_id),
+    
+    current_value       DECIMAL(10,2) DEFAULT 0,
+    is_completed        BOOLEAN DEFAULT FALSE,
+    completed_at        TIMESTAMP WITH TIME ZONE,
+    bonus_credited      BOOLEAN DEFAULT FALSE,
+    bonus_credited_at   TIMESTAMP WITH TIME ZONE,
+    
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(driver_id, incentive_id)
+);
+
+-- ============================================================================
+-- SUPPORT TICKETS TABLE
+-- ============================================================================
+CREATE TABLE support_tickets (
+    ticket_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    ticket_number       VARCHAR(20) UNIQUE NOT NULL,
+    
+    -- User Details
+    user_type           VARCHAR(20) NOT NULL CHECK (user_type IN ('rider', 'driver')),
+    user_id             UUID NOT NULL,
+    
+    -- Related Trip
+    trip_id             UUID REFERENCES trips(trip_id),
+    
+    -- Ticket Details
+    category            VARCHAR(50) NOT NULL,  -- PAYMENT, TRIP_ISSUE, SAFETY, LOST_ITEM, REFUND, DRIVER_BEHAVIOR, etc.
+    sub_category        VARCHAR(50),
+    priority            ticket_priority DEFAULT 'P3',
+    
+    subject             VARCHAR(255) NOT NULL,
+    description         TEXT,
+    
+    -- Status
+    status              ticket_status DEFAULT 'OPEN',
+    
+    -- Assignment
+    assigned_to         UUID,
+    assigned_at         TIMESTAMP WITH TIME ZONE,
+    
+    -- Resolution
+    resolution          TEXT,
+    resolution_type     VARCHAR(50),  -- REFUND_ISSUED, CREDITED_WALLET, EXPLAINED, ESCALATED, etc.
+    refund_amount       DECIMAL(10,2),
+    
+    -- SLA
+    sla_response_due    TIMESTAMP WITH TIME ZONE,
+    sla_resolution_due  TIMESTAMP WITH TIME ZONE,
+    first_response_at   TIMESTAMP WITH TIME ZONE,
+    
+    -- Timestamps
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    resolved_at         TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_support_tickets_user ON support_tickets(user_type, user_id);
+CREATE INDEX idx_support_tickets_status ON support_tickets(status, priority);
+CREATE INDEX idx_support_tickets_trip ON support_tickets(trip_id);
+CREATE INDEX idx_support_tickets_assigned ON support_tickets(assigned_to) WHERE status NOT IN ('RESOLVED', 'CLOSED');
+
+-- ============================================================================
+-- SUPPORT TICKET MESSAGES TABLE
+-- ============================================================================
+CREATE TABLE support_ticket_messages (
+    message_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    ticket_id           UUID NOT NULL REFERENCES support_tickets(ticket_id),
+    
+    sender_type         VARCHAR(20) NOT NULL CHECK (sender_type IN ('user', 'agent', 'system')),
+    sender_id           UUID,
+    
+    message             TEXT NOT NULL,
+    attachments         VARCHAR[] DEFAULT '{}',
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_ticket_messages_ticket ON support_ticket_messages(ticket_id, created_at);
+
+-- ============================================================================
+-- ADMIN USERS TABLE
+-- ============================================================================
+CREATE TABLE admin_users (
+    admin_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email               VARCHAR(255) UNIQUE NOT NULL,
+    password_hash       VARCHAR(255) NOT NULL,
+    name                VARCHAR(255) NOT NULL,
+    phone               VARCHAR(20),
+    
+    -- Role
+    role                VARCHAR(50) NOT NULL CHECK (role IN (
+        'SUPER_ADMIN', 'CITY_ADMIN', 'FINANCE_ADMIN', 'SUPPORT_AGENT', 'OPERATIONS_MANAGER'
+    )),
+    
+    -- City Access (for City Admin)
+    city_ids            UUID[] DEFAULT '{}',
+    
+    -- Permissions (detailed)
+    permissions         JSONB DEFAULT '{}',
+    
+    -- Security
+    is_active           BOOLEAN DEFAULT TRUE,
+    two_fa_enabled      BOOLEAN DEFAULT FALSE,
+    two_fa_secret       VARCHAR(100),
+    
+    -- Activity
+    last_login_at       TIMESTAMP WITH TIME ZONE,
+    last_login_ip       INET,
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by          UUID REFERENCES admin_users(admin_id)
+);
+
+CREATE INDEX idx_admin_users_email ON admin_users(email);
+CREATE INDEX idx_admin_users_role ON admin_users(role);
+
+-- ============================================================================
+-- AUDIT LOGS TABLE
+-- ============================================================================
+CREATE TABLE audit_logs (
+    log_id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Who
+    admin_id            UUID REFERENCES admin_users(admin_id),
+    
+    -- What
+    action              VARCHAR(100) NOT NULL,
+    entity_type         VARCHAR(50) NOT NULL,
+    entity_id           UUID,
+    
+    -- Changes
+    old_values          JSONB,
+    new_values          JSONB,
+    
+    -- Context
+    ip_address          INET,
+    user_agent          VARCHAR(500),
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_audit_logs_admin ON audit_logs(admin_id);
+CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
+CREATE INDEX idx_audit_logs_created ON audit_logs(created_at DESC);
+
+-- ============================================================================
+-- DEVICE TOKENS TABLE
+-- ============================================================================
+CREATE TABLE device_tokens (
+    id                  BIGSERIAL PRIMARY KEY,
+    user_type           VARCHAR(20) NOT NULL CHECK (user_type IN ('rider', 'driver', 'admin')),
+    user_id             UUID NOT NULL,
+    
+    device_token        VARCHAR(500) NOT NULL,
+    platform            VARCHAR(20) NOT NULL CHECK (platform IN ('ios', 'android', 'web')),
+    device_id           VARCHAR(255),
+    
+    is_active           BOOLEAN DEFAULT TRUE,
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(user_id, device_token)
+);
+
+CREATE INDEX idx_device_tokens_user ON device_tokens(user_id, user_type, is_active);
+
+-- ============================================================================
+-- NOTIFICATIONS TABLE
+-- ============================================================================
+CREATE TABLE notifications (
+    notification_id     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_type           VARCHAR(20) NOT NULL,
+    user_id             UUID NOT NULL,
+    
+    title               VARCHAR(255) NOT NULL,
+    body                TEXT NOT NULL,
+    data                JSONB,
+    
+    notification_type   VARCHAR(50) NOT NULL,
+    trip_id             UUID REFERENCES trips(trip_id),
+    
+    status              VARCHAR(20) DEFAULT 'PENDING',
+    sent_at             TIMESTAMP WITH TIME ZONE,
+    read_at             TIMESTAMP WITH TIME ZONE,
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_notifications_user ON notifications(user_id, user_type, created_at DESC);
+
+-- ============================================================================
+-- LOCATION HISTORY TABLE
+-- ============================================================================
+CREATE TABLE location_history (
+    id                  BIGSERIAL PRIMARY KEY,
+    driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
+    trip_id             UUID REFERENCES trips(trip_id),
+    
+    location            GEOGRAPHY(Point, 4326) NOT NULL,
+    speed               DECIMAL(5,2),
+    heading             DECIMAL(5,2),
+    accuracy            DECIMAL(5,2),
+    
+    recorded_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_location_history_driver ON location_history(driver_id, recorded_at DESC);
+CREATE INDEX idx_location_history_trip ON location_history(trip_id) WHERE trip_id IS NOT NULL;
+
+-- ============================================================================
+-- SURGE PRICING HISTORY TABLE
+-- ============================================================================
+CREATE TABLE surge_pricing (
+    id                  BIGSERIAL PRIMARY KEY,
+    city_id             UUID REFERENCES cities(city_id),
+    geohash             VARCHAR(12) NOT NULL,
+    
+    surge_multiplier    DECIMAL(3,2) NOT NULL,
+    available_drivers   INT,
+    pending_requests    INT,
+    demand_ratio        DECIMAL(5,2),
+    
+    calculated_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    valid_until         TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_surge_pricing_geohash ON surge_pricing(geohash, calculated_at DESC);
+CREATE INDEX idx_surge_pricing_city ON surge_pricing(city_id, calculated_at DESC);
+
+-- ============================================================================
+-- REFERRALS TABLE
+-- ============================================================================
+CREATE TABLE referrals (
+    referral_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Referrer
+    referrer_type       VARCHAR(20) NOT NULL CHECK (referrer_type IN ('rider', 'driver')),
+    referrer_id         UUID NOT NULL,
+    referral_code       VARCHAR(20) NOT NULL,
+    
+    -- Referee
+    referee_type        VARCHAR(20) NOT NULL CHECK (referee_type IN ('rider', 'driver')),
+    referee_id          UUID NOT NULL,
+    
+    -- Status
+    status              VARCHAR(20) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'EXPIRED', 'INVALID')),
+    
+    -- Rewards
+    referrer_reward     DECIMAL(10,2),
+    referee_reward      DECIMAL(10,2),
+    referrer_rewarded   BOOLEAN DEFAULT FALSE,
+    referee_rewarded    BOOLEAN DEFAULT FALSE,
+    
+    -- Timestamps
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    completed_at        TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_referrals_referrer ON referrals(referrer_type, referrer_id);
+CREATE INDEX idx_referrals_referee ON referrals(referee_type, referee_id);
+CREATE INDEX idx_referrals_code ON referrals(referral_code);
 
 -- ============================================================================
 -- FUNCTIONS & TRIGGERS
@@ -548,17 +1116,20 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
--- Apply updated_at trigger to relevant tables
-CREATE TRIGGER update_riders_updated_at BEFORE UPDATE ON riders
+-- Apply triggers
+CREATE TRIGGER tr_riders_updated_at BEFORE UPDATE ON riders
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_drivers_updated_at BEFORE UPDATE ON drivers
+CREATE TRIGGER tr_drivers_updated_at BEFORE UPDATE ON drivers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_trips_updated_at BEFORE UPDATE ON trips
+CREATE TRIGGER tr_trips_updated_at BEFORE UPDATE ON trips
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Function to update driver average rating
+CREATE TRIGGER tr_driver_wallet_updated_at BEFORE UPDATE ON driver_wallet
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Function to update driver rating
 CREATE OR REPLACE FUNCTION update_driver_avg_rating()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -578,10 +1149,10 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_driver_rating_trigger AFTER INSERT OR UPDATE ON ratings
+CREATE TRIGGER tr_update_driver_rating AFTER INSERT OR UPDATE ON ratings
     FOR EACH ROW EXECUTE FUNCTION update_driver_avg_rating();
 
--- Function to update rider average rating
+-- Function to update rider rating
 CREATE OR REPLACE FUNCTION update_rider_avg_rating()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -601,49 +1172,50 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_rider_rating_trigger AFTER INSERT OR UPDATE ON ratings
+CREATE TRIGGER tr_update_rider_rating AFTER INSERT OR UPDATE ON ratings
     FOR EACH ROW EXECUTE FUNCTION update_rider_avg_rating();
 
--- Function to increment trip count on completion
-CREATE OR REPLACE FUNCTION update_trip_counts()
+-- Function to generate ticket number
+CREATE OR REPLACE FUNCTION generate_ticket_number()
 RETURNS TRIGGER AS $$
+DECLARE
+    new_number VARCHAR(20);
 BEGIN
-    IF NEW.status = 'COMPLETED' AND (OLD.status IS NULL OR OLD.status != 'COMPLETED') THEN
-        UPDATE riders SET total_trips = total_trips + 1 WHERE rider_id = NEW.rider_id;
-        UPDATE drivers SET total_trips = total_trips + 1 WHERE driver_id = NEW.driver_id;
-    END IF;
+    new_number := 'TKT' || TO_CHAR(CURRENT_DATE, 'YYMMDD') || '-' || 
+                  LPAD(NEXTVAL('ticket_number_seq')::TEXT, 5, '0');
+    NEW.ticket_number := new_number;
     RETURN NEW;
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_trip_counts_trigger AFTER INSERT OR UPDATE ON trips
-    FOR EACH ROW EXECUTE FUNCTION update_trip_counts();
+CREATE SEQUENCE IF NOT EXISTS ticket_number_seq START 1;
+
+CREATE TRIGGER tr_generate_ticket_number BEFORE INSERT ON support_tickets
+    FOR EACH ROW EXECUTE FUNCTION generate_ticket_number();
 
 -- ============================================================================
--- SAMPLE QUERIES
+-- SAMPLE DATA FOR INITIAL SETUP
 -- ============================================================================
 
--- Find available drivers within 5km (similar to Redis GEORADIUS)
--- SELECT driver_id, name, vehicle_type,
---     ST_Distance(current_location, ST_MakePoint(-122.4194, 37.7749)::geography) as distance_meters
--- FROM drivers
--- WHERE status = 'AVAILABLE'
---     AND is_active = TRUE
---     AND ST_DWithin(current_location, ST_MakePoint(-122.4194, 37.7749)::geography, 5000)
--- ORDER BY distance_meters
--- LIMIT 10;
+-- Insert default cities
+INSERT INTO cities (city_id, name, state, country, timezone, currency, commission_rate) VALUES
+(uuid_generate_v4(), 'Mumbai', 'Maharashtra', 'India', 'Asia/Kolkata', 'INR', 20.00),
+(uuid_generate_v4(), 'Delhi', 'Delhi', 'India', 'Asia/Kolkata', 'INR', 20.00),
+(uuid_generate_v4(), 'Bangalore', 'Karnataka', 'India', 'Asia/Kolkata', 'INR', 20.00),
+(uuid_generate_v4(), 'Hyderabad', 'Telangana', 'India', 'Asia/Kolkata', 'INR', 20.00),
+(uuid_generate_v4(), 'Chennai', 'Tamil Nadu', 'India', 'Asia/Kolkata', 'INR', 20.00);
 
--- Get trip statistics for a driver
--- SELECT 
---     COUNT(*) as total_trips,
---     AVG(actual_fare) as avg_fare,
---     SUM(actual_distance_km) as total_distance,
---     AVG(driver_rating) as avg_rating
--- FROM trips t
--- LEFT JOIN ratings r ON t.trip_id = r.trip_id
--- WHERE t.driver_id = 'driver-uuid-here'
---     AND t.status = 'COMPLETED'
---     AND t.end_time >= CURRENT_DATE - INTERVAL '30 days';
+-- Insert vehicle types
+INSERT INTO vehicle_types (name, display_name, description, max_passengers, sort_order) VALUES
+('bike', 'Bike', 'Motorcycle ride for 1 passenger', 1, 1),
+('auto', 'Auto', 'Auto rickshaw for up to 3 passengers', 3, 2),
+('sedan', 'Sedan', 'Comfortable sedan car', 4, 3),
+('suv', 'SUV/XL', 'Spacious SUV for groups', 6, 4),
+('premium', 'Premium', 'Luxury vehicle experience', 4, 5);
+
+-- Insert default admin
+INSERT INTO admin_users (email, password_hash, name, role) VALUES
+('admin@rideshare.com', '$2a$10$placeholder_hash', 'Super Admin', 'SUPER_ADMIN');
 
 -- ============================================================================
 -- END OF SCHEMA
