@@ -1,811 +1,1510 @@
-# Ride Sharing Application System Design
-## (Like UBER | OLA | Rapido | Lyft)
+# 🚗 Ride Sharing Application - Complete System Design
+## Like UBER | OLA | Rapido | Lyft
 
 ---
 
-## Table of Contents
-1. [Overview](#overview)
-2. [Functional Requirements](#functional-requirements)
-3. [Non-Functional Requirements](#non-functional-requirements)
-4. [Core Entities](#core-entities)
-5. [API Design](#api-design)
-6. [High Level Design (HLD)](#high-level-design-hld)
-7. [Low Level Design (LLD)](#low-level-design-lld)
-8. [Database Schema](#database-schema)
-9. [Scaling & Optimization](#scaling--optimization)
-10. [Key Interview Tips](#key-interview-tips)
+## 📋 Table of Contents
+
+1. [Project Overview](#project-overview)
+2. [System Panels](#system-panels)
+3. [Business Logic & Features](#business-logic--features)
+   - [Rider Panel Features](#-rider-panel-features)
+   - [Driver Panel Features](#-driver-panel-features)
+   - [Admin Panel Features](#-admin-panel-features)
+4. [Complete API Documentation](#complete-api-documentation)
+5. [Database Design](#database-design)
+6. [System Architecture](#system-architecture)
+7. [Core Workflows](#core-workflows)
+8. [Non-Functional Requirements](#non-functional-requirements)
 
 ---
 
-## Overview
+## Project Overview
 
-**Core Flow:**
-> Rider requests → Geo-search nearby drivers → Zookeeper lock (prevent double assignment) → Driver accepts → WebSocket location tracking → Trip completion → Payment & Rating
+A complete ride-sharing platform connecting **Riders** with **Drivers**, managed by **Admins**. The system enables on-demand transportation services with real-time tracking, dynamic pricing, secure payments, and comprehensive analytics.
+
+### Core Flow
+```
+Rider requests ride → System finds nearby drivers → Driver accepts → 
+Real-time tracking → Trip completion → Payment processing → Ratings
+```
+
+### Three System Panels
+
+| Panel | Users | Purpose |
+|-------|-------|---------|
+| **🧑 Rider App** | Passengers | Book rides, track drivers, make payments, rate trips |
+| **🚗 Driver App** | Drivers | Accept rides, navigate, earn money, manage availability |
+| **👨‍💼 Admin Dashboard** | Operations Team | Manage users, drivers, fares, analytics, support |
 
 ---
 
-## Functional Requirements
+## System Panels
 
-| # | Feature | Description |
-|---|---------|-------------|
-| 1 | Fare Estimation | Riders should be able to get fare estimation based on start location and destination |
-| 2 | Ride Request | Riders should be able to request for a ride based on the estimated fare |
-| 3 | Vehicle Categories | Riders should be able to request different categories of car (Sedan, SUV, Bike, Auto) |
-| 4 | Real-time Driver View | Rider can see available drivers nearby in real-time on map |
-| 5 | Driver Matching | Upon request, riders should be matched with a nearby driver (geo-proximity matching) |
-| 6 | Real-time Tracking | Get real-time tracking of driver & user location during trip |
-| 7 | Rating & Payment | After trip ends, rider should be able to rate their ride and make payment |
-| 8 | Driver Status | Drivers should be able to accept/deny ride requests and update their status |
+### Panel Architecture
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           RIDE SHARING PLATFORM                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐               │
+│  │   RIDER APP      │  │   DRIVER APP     │  │  ADMIN DASHBOARD │               │
+│  │   (Mobile)       │  │   (Mobile)       │  │  (Web)           │               │
+│  ├──────────────────┤  ├──────────────────┤  ├──────────────────┤               │
+│  │ • Book Rides     │  │ • Accept Rides   │  │ • User Mgmt      │               │
+│  │ • Track Driver   │  │ • Navigate       │  │ • Driver Mgmt    │               │
+│  │ • Make Payment   │  │ • Earn Money     │  │ • Fare Config    │               │
+│  │ • Rate Trips     │  │ • View Earnings  │  │ • Analytics      │               │
+│  │ • Ride History   │  │ • Go Online/Off  │  │ • Support        │               │
+│  │ • Save Places    │  │ • Documents      │  │ • Promotions     │               │
+│  │ • Promo Codes    │  │ • Ratings        │  │ • Reports        │               │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘               │
+│           │                     │                     │                          │
+│           └─────────────────────┼─────────────────────┘                          │
+│                                 ▼                                                │
+│                    ┌──────────────────────┐                                     │
+│                    │   BACKEND SERVICES   │                                     │
+│                    │   (API + Database)   │                                     │
+│                    └──────────────────────┘                                     │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Business Logic & Features
+
+---
+
+## 🧑 Rider Panel Features
+
+### 1. Authentication & Profile
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Sign Up** | Register via phone/email | OTP verification required, phone must be unique |
+| **Login** | Phone OTP or Social login | JWT token issued, refresh token for session |
+| **Profile Management** | Update name, photo, email | Email change requires verification |
+| **Phone Change** | Update phone number | OTP verification on new number, invalidate old sessions |
+| **Delete Account** | GDPR compliance | Soft delete, data retained 30 days, active rides blocked |
+
+### 2. Home & Search
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Home Screen** | Map with current location | Request location permission, show nearby drivers |
+| **Search Destination** | Autocomplete places search | Google Places API, recent searches cached |
+| **Pick Location on Map** | Select pickup/drop on map | Reverse geocoding to get address |
+| **Saved Places** | Home, Work, Favorites | Max 10 saved places per user |
+| **Recent Locations** | Last 20 searches | Auto-cleared after 30 days |
+
+### 3. Ride Booking
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Fare Estimation** | Show price before booking | `base_fare + (distance × rate) + (time × rate) × surge` |
+| **Vehicle Selection** | Sedan, SUV, Bike, Auto, Pool | Different pricing per vehicle type |
+| **Surge Pricing** | Dynamic pricing during demand | `surge = demand_ratio > threshold ? multiplier : 1.0` |
+| **Schedule Ride** | Book for later (15min - 7days) | Pre-matching 10 min before pickup |
+| **Ride Confirmation** | Confirm booking | Hold payment authorization, create ride request |
+| **Promo Code** | Apply discount | Validate code, check usage limits, apply discount |
+
+### 4. During Ride
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Driver Matching** | Find nearby available driver | GEORADIUS 5km, sorted by distance, Zookeeper lock |
+| **Match Notification** | Driver assigned notification | Push notification with driver details |
+| **Real-time Tracking** | Track driver on map | WebSocket location updates every 3-5 sec |
+| **ETA Updates** | Arrival time estimation | Google Directions API, recalculated every 30 sec |
+| **Driver Details** | Name, photo, rating, vehicle | Shown after match confirmation |
+| **Contact Driver** | Call/Chat with driver | In-app calling, chat within ride context |
+| **Share Trip** | Share live location | Generate shareable link, valid during trip |
+| **SOS/Emergency** | Emergency alert | Notify emergency contacts + call local emergency |
+| **Cancel Ride** | Cancel before/after match | Free <2 min, else cancellation fee applies |
+| **Change Destination** | Modify drop location | Recalculate fare, driver notification |
+
+### 5. Post-Ride
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Trip Summary** | Route, distance, fare breakdown | Shown after trip completion |
+| **Payment** | Auto-charge or Cash | Deduct from saved card/wallet or cash to driver |
+| **Add Tip** | Tip driver (optional) | 0%, 10%, 15%, 20%, Custom amount |
+| **Rate Driver** | 1-5 stars + feedback | Required for next booking, affects driver ranking |
+| **Report Issue** | Lost item, bad experience | Creates support ticket, refund if valid |
+| **Receipt** | Email/SMS receipt | Auto-sent after payment completion |
+
+### 6. Ride History & Payments
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Ride History** | All past rides | Paginated list, filter by date/status |
+| **Ride Details** | View specific trip | Route, fare, driver, timestamps |
+| **Rebook Ride** | Book same route again | Pre-fill pickup/drop from history |
+| **Payment Methods** | Add/Remove cards, UPI, Wallet | PCI compliant storage via Stripe |
+| **Wallet** | In-app wallet balance | Top-up, auto-debit, cashback credits |
+| **Invoices** | Download trip invoices | PDF generation for business expenses |
+
+### 7. Settings & Support
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Notification Settings** | Enable/disable notifications | Ride updates always on, promotions optional |
+| **Language** | Multi-language support | Stored in user preferences |
+| **Help Center** | FAQs, contact support | Categorized help articles |
+| **Live Chat** | Chat with support | Integrated chat support |
+| **Report Safety Issue** | Safety concerns | High-priority ticket, escalated to safety team |
+
+---
+
+## 🚗 Driver Panel Features
+
+### 1. Registration & Onboarding
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Sign Up** | Register as driver | Phone OTP verification |
+| **Document Upload** | License, RC, Insurance, Photo | Image validation, OCR extraction |
+| **Vehicle Registration** | Add vehicle details | Verify against RTO database |
+| **Background Check** | Identity verification | Third-party verification (7-day process) |
+| **Bank Account** | Add payout account | Verify via micro-deposit |
+| **Training Module** | Complete training videos | Must complete before going online |
+| **Approval** | Admin approval required | Manual review by admin team |
+
+### Documents Required
+```
+Required Documents:
+├── Driver's License (valid)
+├── Vehicle Registration Certificate (RC)
+├── Vehicle Insurance (valid)
+├── PAN Card / Aadhaar
+├── Passport Size Photo
+├── Vehicle Photos (4 angles)
+├── Permit (if commercial)
+└── Police Verification (optional)
+```
+
+### 2. Home & Availability
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Go Online/Offline** | Toggle availability | Update Redis status, add/remove from geo-index |
+| **Auto Offline** | Inactive timeout | Offline after 30 min no response |
+| **Heat Map** | See high-demand areas | Show surge zones, suggest relocation |
+| **Earnings Dashboard** | Today's earnings summary | Real-time earnings update |
+| **Trip Requests** | Incoming ride requests | Sound + vibration, 30 sec to respond |
+
+### 3. Accepting Rides
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Ride Request Popup** | Show ride details | Pickup location, distance, estimated fare |
+| **Accept Ride** | Accept the request | Acquire Zookeeper lock, update status to BUSY |
+| **Decline Ride** | Skip this ride | Affects acceptance rate if <85% |
+| **Auto Accept** | Enable auto-accept mode | Automatically accept suitable rides |
+| **Cancel Reasons** | Pre-defined reasons | Customer no-show, safety concern, etc. |
+
+### Acceptance Rate Logic
+```
+acceptance_rate = (accepted_rides / total_offered_rides) × 100
+
+Rules:
+- < 85% = Warning notification
+- < 70% = Priority reduced for ride offers
+- < 50% = Account review, possible suspension
+```
+
+### 4. During Ride
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Navigate to Pickup** | Turn-by-turn navigation | Google Maps integration |
+| **Arrived at Pickup** | Mark arrival | Notify rider, start wait timer (5 min free) |
+| **Start Trip** | Begin the ride | Start fare meter, location tracking |
+| **Navigation** | Route to destination | Optimal route, traffic consideration |
+| **Stops** | Multi-stop rides | Added wait time charges ($0.30/min) |
+| **End Trip** | Complete the ride | Calculate final fare, collect payment |
+| **Collect Cash** | Cash payment collection | Confirm cash received, mark paid |
+
+### Wait Time Charges
+```
+Wait Time Calculation:
+- First 5 minutes: FREE
+- After 5 minutes: $0.30/minute
+- Max wait before auto-cancel: 10 minutes
+```
+
+### 5. Earnings & Payouts
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Earnings Summary** | Daily/Weekly/Monthly | Breakdown by fare, tips, bonuses |
+| **Trip Earnings** | Per-trip breakdown | Base fare - platform commission + tip |
+| **Incentives** | Bonus for targets | Complete 20 rides = $50 bonus |
+| **Surge Earnings** | Extra during surge | Driver gets 70-80% of surge amount |
+| **Weekly Payout** | Bank transfer | Every Monday for previous week |
+| **Instant Payout** | Immediate transfer | Small fee (1-2%) for instant access |
+| **Earning Reports** | Download statements | Tax documents, monthly summaries |
+
+### Commission Structure
+```
+Platform Commission: 20-25% of fare
+Driver Earnings = Total Fare - Commission + Tips + Bonuses
+
+Example:
+- Trip Fare: $20.00
+- Commission (20%): $4.00
+- Driver Earnings: $16.00
+- Tip: $3.00
+- Total to Driver: $19.00
+```
+
+### 6. Ratings & Performance
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Rating Score** | Average rider ratings | Rolling average of last 100 trips |
+| **Performance Metrics** | Acceptance, Cancellation rates | Tracked weekly |
+| **Badges** | Achievement badges | Top Driver, 1000 Trips, 5-Star Week |
+| **Deactivation Risk** | Low rating warning | < 4.5 = warning, < 4.2 = review, < 4.0 = suspend |
+
+### Rating Impact
+```
+Rating Ranges:
+├── 4.8 - 5.0 = Excellent (Priority for rides)
+├── 4.5 - 4.8 = Good (Normal operation)
+├── 4.2 - 4.5 = Warning (Improvement needed)
+├── 4.0 - 4.2 = Review (Training required)
+└── Below 4.0 = Suspension (Account review)
+```
+
+### 7. Settings & Support
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Update Documents** | Renew expired docs | Notification 30 days before expiry |
+| **Vehicle Change** | Update vehicle | Requires re-verification |
+| **Notification Preferences** | Sound, vibration settings | Ride requests always enabled |
+| **Driver Support** | 24/7 helpline | Priority support for drivers |
+| **Report Issue** | Safety or payment issues | Creates high-priority ticket |
+
+---
+
+## 👨‍💼 Admin Panel Features
+
+### 1. Dashboard & Analytics
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Overview Dashboard** | Key metrics at glance | Total rides, revenue, active users |
+| **Real-time Map** | Live view of all rides | Active trips, available drivers |
+| **Revenue Analytics** | Income tracking | Daily/Weekly/Monthly revenue |
+| **Growth Metrics** | User acquisition | New riders, drivers, retention rate |
+| **Geographic Analytics** | Area-wise performance | Hotspots, underserved areas |
+
+### Dashboard Metrics
+```
+Key Performance Indicators (KPIs):
+├── Total Rides Today/Week/Month
+├── Total Revenue
+├── Active Riders / Drivers
+├── Average Trip Duration
+├── Average Trip Distance
+├── Cancellation Rate
+├── Average Rating
+├── Peak Hour Analysis
+└── Surge Pricing Frequency
+```
+
+### 2. User Management (Riders)
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **User List** | All registered riders | Search, filter, paginate |
+| **User Details** | View user profile | Ride history, payment history, ratings given |
+| **Block/Unblock** | Account suspension | Block immediately, requires reason |
+| **Wallet Management** | Add/Deduct balance | Manual wallet adjustments with audit log |
+| **Refund Processing** | Issue refunds | Full/partial refund to original payment method |
+| **User Communications** | Send notifications | Push/SMS/Email to specific users or segments |
+
+### 3. Driver Management
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Driver Applications** | New driver requests | Review documents, approve/reject |
+| **Driver List** | All registered drivers | Filter by status, rating, vehicle type |
+| **Driver Details** | Full driver profile | Trips, earnings, ratings, documents |
+| **Document Verification** | Verify uploaded docs | Mark as verified/rejected |
+| **Driver Approval** | Approve new drivers | Enable driver after all checks pass |
+| **Suspend Driver** | Temporary suspension | With reason, review period |
+| **Terminate Driver** | Permanent removal | Final action, requires approval |
+| **Driver Communications** | Announcements | Bulk notifications to drivers |
+
+### Driver Status Workflow
+```
+Application → Document Review → Background Check → Training → Approval → Active
+
+Status Values:
+├── PENDING - Application submitted
+├── DOCUMENTS_UNDER_REVIEW - Docs uploaded
+├── DOCUMENTS_REJECTED - Docs need reupload
+├── BACKGROUND_CHECK - Verification in progress
+├── TRAINING_PENDING - Must complete training
+├── APPROVED - Can go online
+├── ACTIVE - Currently online
+├── SUSPENDED - Temporarily blocked
+└── TERMINATED - Permanently removed
+```
+
+### 4. Ride Management
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Live Rides** | All ongoing rides | Real-time status, intervention if needed |
+| **Ride History** | All past rides | Search by rider/driver, date range |
+| **Ride Details** | Complete trip info | Route, fare breakdown, communications |
+| **Cancel Ride** | Admin cancel | Emergency cancellations, no fee to rider |
+| **Assign Driver** | Manual assignment | Override system matching |
+| **Dispute Resolution** | Handle complaints | Review trip, refund decisions |
+
+### 5. Fare Configuration
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Base Fare** | Fixed starting fare | Per vehicle type, per city |
+| **Distance Rate** | Per km pricing | Varies by vehicle type |
+| **Time Rate** | Per minute pricing | For traffic/wait time |
+| **Minimum Fare** | Floor price | Minimum charge per ride |
+| **Surge Configuration** | Dynamic pricing rules | Thresholds, multipliers, caps |
+| **City Zones** | Zone-based pricing | Different rates for zones |
+| **Airport Fees** | Special location fees | Fixed surcharge for airports |
+| **Toll Configuration** | Toll handling | Auto-add estimated tolls |
+
+### Fare Configuration Example
+```
+Vehicle: Sedan
+├── Base Fare: $2.50
+├── Per Kilometer: $1.50
+├── Per Minute: $0.30
+├── Minimum Fare: $5.00
+├── Cancellation Fee: $5.00
+├── Wait Time (after 5 min): $0.30/min
+├── Booking Fee: $1.00
+└── Surge Cap: 3.0x maximum
+
+Airport:
+├── Airport Pickup Fee: $5.00
+├── Airport Drop Fee: $0.00
+└── Airport Queue Priority: Enabled
+```
+
+### 6. Promotions & Discounts
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Promo Codes** | Create discount codes | Fixed or percentage, usage limits |
+| **Referral Program** | Rider/Driver referrals | Reward both referrer and referee |
+| **First Ride Discount** | New user offer | Percentage or fixed discount |
+| **Loyalty Program** | Repeat user rewards | Points per ride, redeemable |
+| **Driver Incentives** | Performance bonuses | Target-based extra earnings |
+| **Campaign Management** | Time-based offers | Schedule campaigns |
+
+### Promo Code Types
+```
+Promo Code Configuration:
+├── Code: FIRST50
+├── Type: Percentage
+├── Value: 50%
+├── Max Discount: $10.00
+├── Min Trip Amount: $15.00
+├── Usage Limit: 1000 total
+├── Per User Limit: 1
+├── Valid From: 2024-01-01
+├── Valid Until: 2024-12-31
+├── Vehicle Types: All
+├── Cities: All
+└── First Trip Only: Yes
+```
+
+### 7. Support & Ticketing
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Support Tickets** | All user/driver issues | Categorized, prioritized |
+| **Ticket Assignment** | Assign to agents | Auto-route or manual assign |
+| **Issue Resolution** | Resolve complaints | Actions: refund, credit, apology |
+| **Lost & Found** | Item recovery | Connect rider and driver |
+| **Safety Incidents** | Critical issues | Priority handling, escalation |
+| **SLA Tracking** | Response time metrics | First response, resolution time |
+
+### Ticket Priority
+```
+Priority Levels:
+├── P0 - Safety/Emergency (15 min response)
+├── P1 - Payment Issue (1 hour response)
+├── P2 - Trip Issue (4 hour response)
+├── P3 - General Query (24 hour response)
+└── P4 - Feedback (48 hour response)
+```
+
+### 8. Reports & Exports
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Financial Reports** | Revenue, payouts, commissions | Daily/Weekly/Monthly |
+| **Operational Reports** | Rides, cancellations, ratings | By city, time period |
+| **Driver Reports** | Performance, earnings, compliance | Individual or aggregate |
+| **User Reports** | Acquisition, retention, LTV | Cohort analysis |
+| **Tax Reports** | GST, TDS reports | Compliance documents |
+| **Export Data** | CSV/Excel downloads | Custom date ranges |
+
+### 9. System Configuration
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **City Management** | Add/Edit cities | Service areas, pricing zones |
+| **Vehicle Types** | Configure vehicle categories | Enable/disable by city |
+| **Commission Settings** | Platform fee percentage | By city, vehicle type |
+| **Rating Thresholds** | Min ratings for operation | Suspension triggers |
+| **Radius Settings** | Driver search radius | Default 5km, configurable |
+| **SOS Configuration** | Emergency contacts | Local emergency numbers |
+| **Payment Gateways** | Payment provider settings | Stripe, Razorpay keys |
+| **Notification Templates** | SMS/Push content | Customizable messages |
+
+### 10. Staff Management
+
+| Feature | Description | Business Logic |
+|---------|-------------|----------------|
+| **Admin Users** | Create admin accounts | Email + password login |
+| **Roles & Permissions** | Role-based access | Super Admin, City Admin, Support Agent |
+| **Activity Logs** | Audit trail | Who did what when |
+| **Two-Factor Auth** | Security enhancement | TOTP or SMS verification |
+
+### Admin Roles
+```
+Role Permissions:
+├── Super Admin
+│   └── Full access to all features
+├── City Admin
+│   ├── Manage city riders/drivers
+│   ├── View city reports
+│   └── Handle city support tickets
+├── Finance Admin
+│   ├── View/Export financial reports
+│   ├── Process refunds
+│   └── Configure fares
+├── Support Agent
+│   ├── View/Respond to tickets
+│   ├── View user/driver details
+│   └── Process refunds (limited)
+└── Operations Manager
+    ├── Monitor live rides
+    ├── Manage drivers
+    └── View operational reports
+```
+
+---
+
+## Complete API Documentation
+
+### Base URL
+```
+Production: https://api.rideshare.com/v1
+Staging: https://staging-api.rideshare.com/v1
+```
+
+### Authentication
+```
+All APIs require JWT Bearer token in header:
+Authorization: Bearer <access_token>
+
+Refresh Token Endpoint:
+POST /auth/refresh
+```
+
+---
+
+### 🧑 Rider APIs
+
+#### Authentication
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/auth/rider/send-otp` | Send OTP to phone |
+| `POST` | `/auth/rider/verify-otp` | Verify OTP and login |
+| `POST` | `/auth/rider/social-login` | Google/Facebook/Apple login |
+| `POST` | `/auth/refresh` | Refresh access token |
+| `POST` | `/auth/logout` | Invalidate tokens |
+
+#### Profile
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/rider/profile` | Get profile details |
+| `PUT` | `/rider/profile` | Update profile |
+| `POST` | `/rider/profile/photo` | Upload profile photo |
+| `DELETE` | `/rider/profile` | Delete account |
+
+#### Saved Places
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/rider/places` | List saved places |
+| `POST` | `/rider/places` | Add saved place |
+| `PUT` | `/rider/places/{placeId}` | Update saved place |
+| `DELETE` | `/rider/places/{placeId}` | Delete saved place |
+
+#### Ride Booking
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/ride/estimate` | Get fare estimation |
+| `POST` | `/ride/request` | Book a ride |
+| `POST` | `/ride/schedule` | Schedule future ride |
+| `GET` | `/ride/{rideId}` | Get ride details |
+| `PUT` | `/ride/{rideId}/destination` | Change destination |
+| `POST` | `/ride/{rideId}/cancel` | Cancel ride |
+| `POST` | `/ride/{rideId}/rate` | Rate completed ride |
+| `POST` | `/ride/{rideId}/tip` | Add tip to driver |
+| `GET` | `/ride/{rideId}/share-link` | Get trip share link |
+
+#### Real-time Updates (WebSocket)
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `driver_assigned` | Server → Client | Driver matched |
+| `driver_location` | Server → Client | Driver location update |
+| `driver_arrived` | Server → Client | Driver at pickup |
+| `trip_started` | Server → Client | Trip began |
+| `trip_completed` | Server → Client | Trip ended |
+| `trip_cancelled` | Server → Client | Trip cancelled |
+
+#### History & Payments
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/rider/rides` | Ride history (paginated) |
+| `GET` | `/rider/rides/{rideId}/receipt` | Download receipt PDF |
+| `GET` | `/rider/payment-methods` | List payment methods |
+| `POST` | `/rider/payment-methods` | Add payment method |
+| `DELETE` | `/rider/payment-methods/{id}` | Remove payment method |
+| `GET` | `/rider/wallet` | Get wallet balance |
+| `POST` | `/rider/wallet/topup` | Add money to wallet |
+
+#### Promo & Support
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/promo/validate` | Validate promo code |
+| `POST` | `/promo/apply` | Apply promo to ride |
+| `GET` | `/support/faq` | Get FAQ list |
+| `POST` | `/support/ticket` | Create support ticket |
+| `GET` | `/support/tickets` | List my tickets |
+
+---
+
+### 🚗 Driver APIs
+
+#### Registration & Auth
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/auth/driver/send-otp` | Send OTP to phone |
+| `POST` | `/auth/driver/verify-otp` | Verify OTP |
+| `POST` | `/driver/register` | Submit registration |
+| `POST` | `/driver/documents` | Upload documents |
+| `GET` | `/driver/documents` | Get document status |
+
+#### Profile & Vehicle
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/driver/profile` | Get profile |
+| `PUT` | `/driver/profile` | Update profile |
+| `GET` | `/driver/vehicle` | Get vehicle details |
+| `PUT` | `/driver/vehicle` | Update vehicle |
+| `POST` | `/driver/bank-account` | Add bank account |
+
+#### Availability & Location
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/driver/go-online` | Start accepting rides |
+| `POST` | `/driver/go-offline` | Stop accepting rides |
+| `GET` | `/driver/status` | Get current status |
+| `WS` | `/driver/location` | WebSocket: Send location updates |
+| `GET` | `/driver/heatmap` | Get demand heatmap |
+
+#### Ride Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/driver/ride/{requestId}/accept` | Accept ride request |
+| `POST` | `/driver/ride/{requestId}/decline` | Decline ride request |
+| `POST` | `/driver/ride/{rideId}/arrived` | Mark arrived at pickup |
+| `POST` | `/driver/ride/{rideId}/start` | Start trip |
+| `POST` | `/driver/ride/{rideId}/complete` | Complete trip |
+| `POST` | `/driver/ride/{rideId}/cancel` | Cancel ride |
+| `POST` | `/driver/ride/{rideId}/collect-cash` | Confirm cash payment |
+
+#### Earnings & Reports
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/driver/earnings/summary` | Earnings overview |
+| `GET` | `/driver/earnings/daily` | Daily breakdown |
+| `GET` | `/driver/earnings/weekly` | Weekly breakdown |
+| `GET` | `/driver/earnings/trips` | Trip-wise earnings |
+| `POST` | `/driver/earnings/instant-payout` | Request instant payout |
+| `GET` | `/driver/payouts` | Payout history |
+
+#### Performance & Support
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/driver/ratings` | Rating breakdown |
+| `GET` | `/driver/performance` | Performance metrics |
+| `GET` | `/driver/incentives` | Available incentives |
+| `POST` | `/support/driver-ticket` | Create support ticket |
+
+---
+
+### 👨‍💼 Admin APIs
+
+#### Authentication
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/admin/auth/login` | Admin login |
+| `POST` | `/admin/auth/logout` | Admin logout |
+| `POST` | `/admin/auth/2fa/verify` | Verify 2FA |
+
+#### Dashboard
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/dashboard/stats` | Overview statistics |
+| `GET` | `/admin/dashboard/live-rides` | Active rides count |
+| `GET` | `/admin/dashboard/revenue` | Revenue metrics |
+| `GET` | `/admin/dashboard/charts` | Chart data |
+
+#### User Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/riders` | List riders |
+| `GET` | `/admin/riders/{riderId}` | Get rider details |
+| `PUT` | `/admin/riders/{riderId}/block` | Block rider |
+| `PUT` | `/admin/riders/{riderId}/unblock` | Unblock rider |
+| `POST` | `/admin/riders/{riderId}/wallet` | Adjust wallet |
+| `POST` | `/admin/riders/{riderId}/refund` | Process refund |
+
+#### Driver Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/drivers` | List drivers |
+| `GET` | `/admin/drivers/pending` | Pending approvals |
+| `GET` | `/admin/drivers/{driverId}` | Get driver details |
+| `PUT` | `/admin/drivers/{driverId}/approve` | Approve driver |
+| `PUT` | `/admin/drivers/{driverId}/reject` | Reject application |
+| `PUT` | `/admin/drivers/{driverId}/suspend` | Suspend driver |
+| `PUT` | `/admin/drivers/{driverId}/activate` | Reactivate driver |
+| `PUT` | `/admin/drivers/{driverId}/documents/verify` | Verify documents |
+
+#### Ride Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/rides` | List all rides |
+| `GET` | `/admin/rides/live` | Live rides |
+| `GET` | `/admin/rides/{rideId}` | Get ride details |
+| `POST` | `/admin/rides/{rideId}/cancel` | Admin cancel ride |
+| `POST` | `/admin/rides/{rideId}/assign-driver` | Manual driver assignment |
+
+#### Fare Configuration
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/fares` | Get fare config |
+| `PUT` | `/admin/fares` | Update fare config |
+| `GET` | `/admin/fares/surge` | Get surge config |
+| `PUT` | `/admin/fares/surge` | Update surge config |
+| `GET` | `/admin/fares/cities` | List city configs |
+| `POST` | `/admin/fares/cities` | Add city |
+| `PUT` | `/admin/fares/cities/{cityId}` | Update city config |
+
+#### Promotions
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/promos` | List promo codes |
+| `POST` | `/admin/promos` | Create promo code |
+| `PUT` | `/admin/promos/{promoId}` | Update promo |
+| `DELETE` | `/admin/promos/{promoId}` | Delete promo |
+| `GET` | `/admin/promos/{promoId}/usage` | Promo usage stats |
+
+#### Support
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/tickets` | List support tickets |
+| `GET` | `/admin/tickets/{ticketId}` | Get ticket details |
+| `PUT` | `/admin/tickets/{ticketId}/assign` | Assign to agent |
+| `PUT` | `/admin/tickets/{ticketId}/resolve` | Resolve ticket |
+| `POST` | `/admin/tickets/{ticketId}/reply` | Reply to ticket |
+
+#### Reports
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/reports/rides` | Ride reports |
+| `GET` | `/admin/reports/revenue` | Revenue reports |
+| `GET` | `/admin/reports/drivers` | Driver reports |
+| `GET` | `/admin/reports/users` | User reports |
+| `POST` | `/admin/reports/export` | Export report |
+
+#### System Config
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/config/cities` | List cities |
+| `GET` | `/admin/config/vehicle-types` | Vehicle types |
+| `GET` | `/admin/config/settings` | System settings |
+| `PUT` | `/admin/config/settings` | Update settings |
+
+#### Staff Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/staff` | List admin users |
+| `POST` | `/admin/staff` | Create admin user |
+| `PUT` | `/admin/staff/{staffId}` | Update admin |
+| `DELETE` | `/admin/staff/{staffId}` | Remove admin |
+| `GET` | `/admin/staff/roles` | List roles |
+| `GET` | `/admin/audit-log` | Activity log |
+
+---
+
+## Database Design
+
+### Complete Schema Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           DATABASE SCHEMA                                        │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  CORE TABLES                        SUPPORTING TABLES                            │
+│  ────────────                       ─────────────────                            │
+│  ✓ riders                           ✓ ride_requests                              │
+│  ✓ drivers                          ✓ ratings                                    │
+│  ✓ trips                            ✓ payments                                   │
+│  ✓ admin_users                      ✓ driver_payouts                             │
+│                                     ✓ location_history                           │
+│  CONFIGURATION TABLES               ✓ device_tokens                              │
+│  ────────────────────               ✓ notifications                              │
+│  ✓ cities                           ✓ support_tickets                            │
+│  ✓ vehicle_types                    ✓ promo_codes                                │
+│  ✓ fare_configs                     ✓ promo_usage                                │
+│  ✓ surge_configs                    ✓ saved_places                               │
+│                                     ✓ audit_logs                                 │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Entity Relationship Diagram
+
+```
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│    RIDERS    │         │    TRIPS     │         │   DRIVERS    │
+├──────────────┤         ├──────────────┤         ├──────────────┤
+│ rider_id  PK │────┐    │ trip_id   PK │    ┌────│ driver_id PK │
+│ phone        │    │    │ rider_id  FK │────┘    │ phone        │
+│ email        │    └───▶│ driver_id FK │◀────────│ email        │
+│ name         │         │ status       │         │ name         │
+│ avg_rating   │         │ pickup_loc   │         │ vehicle_type │
+│ wallet_bal   │         │ drop_loc     │         │ status       │
+│ created_at   │         │ fare         │         │ avg_rating   │
+└──────────────┘         │ surge_mult   │         │ is_verified  │
+       │                 │ distance_km  │         └──────────────┘
+       │                 │ duration_min │                │
+       │                 │ created_at   │                │
+       │                 └──────────────┘                │
+       │                        │                        │
+       │         ┌──────────────┼──────────────┐        │
+       │         │              │              │        │
+       │         ▼              ▼              ▼        │
+       │  ┌───────────┐  ┌───────────┐  ┌───────────┐  │
+       │  │  RATINGS  │  │ PAYMENTS  │  │ LOCATION  │  │
+       │  ├───────────┤  ├───────────┤  │ _HISTORY  │  │
+       │  │ rating_id │  │payment_id │  ├───────────┤  │
+       │  │ trip_id   │  │ trip_id   │  │ id        │  │
+       │  │ driver_   │  │ amount    │  │ driver_id │──┘
+       │  │  rating   │  │ method    │  │ trip_id   │
+       │  │ rider_    │  │ status    │  │ location  │
+       │  │  rating   │  │ tip       │  │ timestamp │
+       │  └───────────┘  └───────────┘  └───────────┘
+       │
+       │         ┌───────────────────────────────┐
+       └────────▶│         SAVED_PLACES          │
+                 ├───────────────────────────────┤
+                 │ place_id, rider_id, name,     │
+                 │ address, lat, lon, type       │
+                 └───────────────────────────────┘
+```
+
+### Table Definitions
+
+#### Core Tables
+
+```sql
+-- RIDERS TABLE
+CREATE TABLE riders (
+    rider_id          UUID PRIMARY KEY,
+    phone             VARCHAR(20) UNIQUE NOT NULL,
+    email             VARCHAR(255) UNIQUE,
+    name              VARCHAR(255),
+    profile_photo     VARCHAR(500),
+    avg_rating        DECIMAL(3,2) DEFAULT 5.00,
+    total_trips       INT DEFAULT 0,
+    wallet_balance    DECIMAL(10,2) DEFAULT 0.00,
+    referral_code     VARCHAR(20) UNIQUE,
+    referred_by       UUID REFERENCES riders(rider_id),
+    is_active         BOOLEAN DEFAULT TRUE,
+    is_verified       BOOLEAN DEFAULT FALSE,
+    language          VARCHAR(10) DEFAULT 'en',
+    created_at        TIMESTAMP DEFAULT NOW(),
+    updated_at        TIMESTAMP DEFAULT NOW()
+);
+
+-- DRIVERS TABLE
+CREATE TABLE drivers (
+    driver_id           UUID PRIMARY KEY,
+    phone               VARCHAR(20) UNIQUE NOT NULL,
+    email               VARCHAR(255),
+    name                VARCHAR(255) NOT NULL,
+    profile_photo       VARCHAR(500),
+    
+    -- Vehicle Info
+    vehicle_type        VARCHAR(20) NOT NULL,
+    vehicle_model       VARCHAR(100),
+    vehicle_color       VARCHAR(50),
+    license_plate       VARCHAR(20) NOT NULL,
+    
+    -- Status
+    status              VARCHAR(20) DEFAULT 'PENDING',
+    is_online           BOOLEAN DEFAULT FALSE,
+    current_location    GEOGRAPHY(Point, 4326),
+    current_trip_id     UUID,
+    
+    -- Metrics
+    avg_rating          DECIMAL(3,2) DEFAULT 5.00,
+    total_trips         INT DEFAULT 0,
+    acceptance_rate     DECIMAL(5,2) DEFAULT 100.00,
+    cancellation_rate   DECIMAL(5,2) DEFAULT 0.00,
+    
+    -- Documents
+    license_number      VARCHAR(50),
+    license_expiry      DATE,
+    license_verified    BOOLEAN DEFAULT FALSE,
+    rc_number           VARCHAR(50),
+    rc_verified         BOOLEAN DEFAULT FALSE,
+    insurance_expiry    DATE,
+    
+    -- Bank
+    bank_account_number VARCHAR(50),
+    bank_ifsc           VARCHAR(20),
+    bank_verified       BOOLEAN DEFAULT FALSE,
+    
+    -- Timestamps
+    approved_at         TIMESTAMP,
+    last_online_at      TIMESTAMP,
+    created_at          TIMESTAMP DEFAULT NOW()
+);
+
+-- TRIPS TABLE
+CREATE TABLE trips (
+    trip_id               UUID PRIMARY KEY,
+    rider_id              UUID NOT NULL REFERENCES riders(rider_id),
+    driver_id             UUID REFERENCES drivers(driver_id),
+    
+    -- Locations
+    pickup_location       GEOGRAPHY(Point, 4326) NOT NULL,
+    pickup_address        VARCHAR(500),
+    drop_location         GEOGRAPHY(Point, 4326) NOT NULL,
+    drop_address          VARCHAR(500),
+    actual_route          GEOGRAPHY(LineString, 4326),
+    
+    -- Status & Type
+    status                VARCHAR(30) DEFAULT 'PENDING',
+    vehicle_type          VARCHAR(20) NOT NULL,
+    is_scheduled          BOOLEAN DEFAULT FALSE,
+    scheduled_at          TIMESTAMP,
+    
+    -- Fare
+    estimated_fare        DECIMAL(10,2),
+    actual_fare           DECIMAL(10,2),
+    base_fare             DECIMAL(10,2),
+    distance_fare         DECIMAL(10,2),
+    time_fare             DECIMAL(10,2),
+    wait_fare             DECIMAL(10,2) DEFAULT 0,
+    surge_multiplier      DECIMAL(3,2) DEFAULT 1.00,
+    toll_amount           DECIMAL(10,2) DEFAULT 0,
+    discount_amount       DECIMAL(10,2) DEFAULT 0,
+    promo_code            VARCHAR(50),
+    
+    -- Metrics
+    estimated_distance_km DECIMAL(10,2),
+    actual_distance_km    DECIMAL(10,2),
+    estimated_duration    INT,
+    actual_duration       INT,
+    wait_time_minutes     INT DEFAULT 0,
+    
+    -- Payment
+    payment_method        VARCHAR(20),
+    payment_status        VARCHAR(20) DEFAULT 'PENDING',
+    
+    -- Timestamps
+    requested_at          TIMESTAMP DEFAULT NOW(),
+    matched_at            TIMESTAMP,
+    driver_arrived_at     TIMESTAMP,
+    started_at            TIMESTAMP,
+    completed_at          TIMESTAMP,
+    cancelled_at          TIMESTAMP,
+    cancellation_reason   VARCHAR(255),
+    cancelled_by          VARCHAR(20)
+);
+
+-- ADMIN USERS TABLE
+CREATE TABLE admin_users (
+    admin_id          UUID PRIMARY KEY,
+    email             VARCHAR(255) UNIQUE NOT NULL,
+    password_hash     VARCHAR(255) NOT NULL,
+    name              VARCHAR(255) NOT NULL,
+    role              VARCHAR(50) NOT NULL,
+    phone             VARCHAR(20),
+    is_active         BOOLEAN DEFAULT TRUE,
+    two_fa_enabled    BOOLEAN DEFAULT FALSE,
+    two_fa_secret     VARCHAR(100),
+    last_login_at     TIMESTAMP,
+    created_at        TIMESTAMP DEFAULT NOW(),
+    created_by        UUID REFERENCES admin_users(admin_id)
+);
+```
+
+#### Supporting Tables
+
+```sql
+-- RATINGS TABLE
+CREATE TABLE ratings (
+    rating_id         UUID PRIMARY KEY,
+    trip_id           UUID NOT NULL REFERENCES trips(trip_id),
+    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
+    driver_id         UUID NOT NULL REFERENCES drivers(driver_id),
+    driver_rating     INT CHECK (driver_rating BETWEEN 1 AND 5),
+    rider_rating      INT CHECK (rider_rating BETWEEN 1 AND 5),
+    rider_feedback    TEXT,
+    driver_feedback   TEXT,
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+
+-- PAYMENTS TABLE
+CREATE TABLE payments (
+    payment_id          UUID PRIMARY KEY,
+    trip_id             UUID NOT NULL REFERENCES trips(trip_id),
+    rider_id            UUID NOT NULL REFERENCES riders(rider_id),
+    amount              DECIMAL(10,2) NOT NULL,
+    tip_amount          DECIMAL(10,2) DEFAULT 0,
+    payment_method      VARCHAR(20) NOT NULL,
+    status              VARCHAR(20) DEFAULT 'PENDING',
+    gateway_txn_id      VARCHAR(255),
+    gateway_response    JSONB,
+    refund_amount       DECIMAL(10,2),
+    refund_reason       VARCHAR(255),
+    created_at          TIMESTAMP DEFAULT NOW(),
+    completed_at        TIMESTAMP
+);
+
+-- DRIVER PAYOUTS TABLE
+CREATE TABLE driver_payouts (
+    payout_id           UUID PRIMARY KEY,
+    driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
+    amount              DECIMAL(10,2) NOT NULL,
+    period_start        DATE NOT NULL,
+    period_end          DATE NOT NULL,
+    total_trips         INT,
+    total_earnings      DECIMAL(10,2),
+    commission_amount   DECIMAL(10,2),
+    bonus_amount        DECIMAL(10,2) DEFAULT 0,
+    status              VARCHAR(20) DEFAULT 'PENDING',
+    bank_reference      VARCHAR(100),
+    processed_at        TIMESTAMP,
+    created_at          TIMESTAMP DEFAULT NOW()
+);
+
+-- SAVED PLACES TABLE
+CREATE TABLE saved_places (
+    place_id          UUID PRIMARY KEY,
+    rider_id          UUID NOT NULL REFERENCES riders(rider_id),
+    name              VARCHAR(100) NOT NULL,
+    place_type        VARCHAR(20) DEFAULT 'OTHER',
+    address           VARCHAR(500) NOT NULL,
+    location          GEOGRAPHY(Point, 4326) NOT NULL,
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+
+-- PROMO CODES TABLE
+CREATE TABLE promo_codes (
+    promo_id          UUID PRIMARY KEY,
+    code              VARCHAR(50) UNIQUE NOT NULL,
+    description       VARCHAR(255),
+    discount_type     VARCHAR(20) NOT NULL,
+    discount_value    DECIMAL(10,2) NOT NULL,
+    max_discount      DECIMAL(10,2),
+    min_trip_amount   DECIMAL(10,2) DEFAULT 0,
+    max_uses          INT,
+    max_uses_per_user INT DEFAULT 1,
+    current_uses      INT DEFAULT 0,
+    valid_from        TIMESTAMP DEFAULT NOW(),
+    valid_until       TIMESTAMP,
+    vehicle_types     VARCHAR[] DEFAULT '{}',
+    city_ids          UUID[] DEFAULT '{}',
+    first_trip_only   BOOLEAN DEFAULT FALSE,
+    is_active         BOOLEAN DEFAULT TRUE,
+    created_by        UUID REFERENCES admin_users(admin_id),
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+
+-- SUPPORT TICKETS TABLE
+CREATE TABLE support_tickets (
+    ticket_id         UUID PRIMARY KEY,
+    ticket_number     VARCHAR(20) UNIQUE NOT NULL,
+    user_type         VARCHAR(20) NOT NULL,
+    user_id           UUID NOT NULL,
+    trip_id           UUID REFERENCES trips(trip_id),
+    category          VARCHAR(50) NOT NULL,
+    priority          VARCHAR(10) DEFAULT 'P3',
+    subject           VARCHAR(255) NOT NULL,
+    description       TEXT,
+    status            VARCHAR(20) DEFAULT 'OPEN',
+    assigned_to       UUID REFERENCES admin_users(admin_id),
+    resolution        TEXT,
+    refund_amount     DECIMAL(10,2),
+    created_at        TIMESTAMP DEFAULT NOW(),
+    first_response_at TIMESTAMP,
+    resolved_at       TIMESTAMP
+);
+
+-- NOTIFICATIONS TABLE
+CREATE TABLE notifications (
+    notification_id   UUID PRIMARY KEY,
+    user_type         VARCHAR(20) NOT NULL,
+    user_id           UUID NOT NULL,
+    title             VARCHAR(255) NOT NULL,
+    body              TEXT NOT NULL,
+    data              JSONB,
+    type              VARCHAR(50) NOT NULL,
+    trip_id           UUID REFERENCES trips(trip_id),
+    is_read           BOOLEAN DEFAULT FALSE,
+    sent_at           TIMESTAMP DEFAULT NOW()
+);
+
+-- DEVICE TOKENS TABLE
+CREATE TABLE device_tokens (
+    id                BIGSERIAL PRIMARY KEY,
+    user_type         VARCHAR(20) NOT NULL,
+    user_id           UUID NOT NULL,
+    device_token      VARCHAR(500) NOT NULL,
+    platform          VARCHAR(20) NOT NULL,
+    is_active         BOOLEAN DEFAULT TRUE,
+    created_at        TIMESTAMP DEFAULT NOW(),
+    UNIQUE(user_id, device_token)
+);
+
+-- AUDIT LOG TABLE
+CREATE TABLE audit_logs (
+    log_id            UUID PRIMARY KEY,
+    admin_id          UUID REFERENCES admin_users(admin_id),
+    action            VARCHAR(100) NOT NULL,
+    entity_type       VARCHAR(50) NOT NULL,
+    entity_id         UUID,
+    old_values        JSONB,
+    new_values        JSONB,
+    ip_address        INET,
+    user_agent        VARCHAR(500),
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+```
+
+#### Configuration Tables
+
+```sql
+-- CITIES TABLE
+CREATE TABLE cities (
+    city_id           UUID PRIMARY KEY,
+    name              VARCHAR(100) NOT NULL,
+    state             VARCHAR(100),
+    country           VARCHAR(100) NOT NULL,
+    timezone          VARCHAR(50) NOT NULL,
+    currency          VARCHAR(10) DEFAULT 'USD',
+    is_active         BOOLEAN DEFAULT TRUE,
+    boundaries        GEOGRAPHY(Polygon, 4326),
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+
+-- VEHICLE TYPES TABLE
+CREATE TABLE vehicle_types (
+    vehicle_type_id   UUID PRIMARY KEY,
+    name              VARCHAR(50) NOT NULL,
+    display_name      VARCHAR(100) NOT NULL,
+    description       VARCHAR(255),
+    icon_url          VARCHAR(500),
+    max_passengers    INT DEFAULT 4,
+    is_active         BOOLEAN DEFAULT TRUE,
+    sort_order        INT DEFAULT 0,
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+
+-- FARE CONFIGS TABLE
+CREATE TABLE fare_configs (
+    config_id         UUID PRIMARY KEY,
+    city_id           UUID NOT NULL REFERENCES cities(city_id),
+    vehicle_type_id   UUID NOT NULL REFERENCES vehicle_types(vehicle_type_id),
+    base_fare         DECIMAL(10,2) NOT NULL,
+    per_km_rate       DECIMAL(10,2) NOT NULL,
+    per_minute_rate   DECIMAL(10,2) NOT NULL,
+    minimum_fare      DECIMAL(10,2) NOT NULL,
+    booking_fee       DECIMAL(10,2) DEFAULT 0,
+    cancellation_fee  DECIMAL(10,2) DEFAULT 0,
+    wait_time_rate    DECIMAL(10,2) DEFAULT 0,
+    wait_time_free    INT DEFAULT 5,
+    airport_fee       DECIMAL(10,2) DEFAULT 0,
+    is_active         BOOLEAN DEFAULT TRUE,
+    created_at        TIMESTAMP DEFAULT NOW(),
+    updated_at        TIMESTAMP DEFAULT NOW(),
+    UNIQUE(city_id, vehicle_type_id)
+);
+
+-- SURGE CONFIGS TABLE
+CREATE TABLE surge_configs (
+    config_id         UUID PRIMARY KEY,
+    city_id           UUID NOT NULL REFERENCES cities(city_id),
+    demand_threshold  DECIMAL(5,2) DEFAULT 1.5,
+    surge_levels      JSONB NOT NULL,
+    max_surge         DECIMAL(3,2) DEFAULT 3.0,
+    calculation_interval INT DEFAULT 60,
+    is_active         BOOLEAN DEFAULT TRUE,
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+
+-- Example surge_levels JSON:
+-- [
+--   {"min_ratio": 1.5, "max_ratio": 2.0, "multiplier": 1.2},
+--   {"min_ratio": 2.0, "max_ratio": 3.0, "multiplier": 1.5},
+--   {"min_ratio": 3.0, "max_ratio": 5.0, "multiplier": 1.8},
+--   {"min_ratio": 5.0, "max_ratio": null, "multiplier": 2.5}
+-- ]
+```
+
+### Key Indexes
+
+```sql
+-- Geospatial Indexes
+CREATE INDEX idx_drivers_location ON drivers USING GIST (current_location);
+CREATE INDEX idx_trips_pickup ON trips USING GIST (pickup_location);
+CREATE INDEX idx_saved_places_location ON saved_places USING GIST (location);
+
+-- Status & Lookup Indexes
+CREATE INDEX idx_drivers_online ON drivers(is_online, status) WHERE is_online = TRUE;
+CREATE INDEX idx_trips_status ON trips(status);
+CREATE INDEX idx_trips_rider ON trips(rider_id, requested_at DESC);
+CREATE INDEX idx_trips_driver ON trips(driver_id, requested_at DESC);
+CREATE INDEX idx_payments_status ON payments(status);
+CREATE INDEX idx_tickets_status ON support_tickets(status, priority);
+
+-- Time-based Indexes
+CREATE INDEX idx_trips_requested ON trips(requested_at DESC);
+CREATE INDEX idx_audit_created ON audit_logs(created_at DESC);
+```
+
+---
+
+## System Architecture
+
+### High-Level Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                                    CLIENTS                                          │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                          │
+│  │  Rider App   │    │  Driver App  │    │ Admin Panel  │                          │
+│  │  (Mobile)    │    │  (Mobile)    │    │   (Web)      │                          │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                          │
+└─────────┼──────────────────┼────────────────────┼──────────────────────────────────┘
+          │                  │                    │
+          └──────────────────┼────────────────────┘
+                             ▼
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                              CDN / CLOUDFLARE                                       │
+│                         (Static Assets, DDoS Protection)                            │
+└────────────────────────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                        LOAD BALANCER (AWS ALB / Nginx)                              │
+│                    (SSL Termination, Health Checks, Routing)                        │
+└────────────────────────────────────────────────────────────────────────────────────┘
+                             │
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+│  API Gateway   │  │  WebSocket     │  │   Admin API    │
+│  (REST APIs)   │  │    Gateway     │  │   (Internal)   │
+├────────────────┤  ├────────────────┤  ├────────────────┤
+│ • Auth         │  │ • Location     │  │ • Dashboard    │
+│ • Rate Limit   │  │   Updates      │  │ • Management   │
+│ • Validation   │  │ • Trip Events  │  │ • Reports      │
+└───────┬────────┘  └───────┬────────┘  └───────┬────────┘
+        │                   │                   │
+        └───────────────────┼───────────────────┘
+                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                            MICROSERVICES LAYER                                      │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │
+│  │    Auth     │ │    Ride     │ │   Driver    │ │   Payment   │ │Notification │  │
+│  │   Service   │ │   Service   │ │   Service   │ │   Service   │ │   Service   │  │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘  │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │
+│  │   Pricing   │ │  Matching   │ │   Rating    │ │   Support   │ │  Analytics  │  │
+│  │   Service   │ │   Service   │ │   Service   │ │   Service   │ │   Service   │  │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│     REDIS     │  │    KAFKA      │  │   ZOOKEEPER   │
+│   (Cache +    │  │  (Events +    │  │ (Distributed  │
+│  Geospatial)  │  │   Async)      │  │    Locks)     │
+└───────────────┘  └───────────────┘  └───────────────┘
+        │                   │
+        └───────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                           DATABASE LAYER                                            │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │                     PostgreSQL (Primary + Read Replicas)                     │   │
+│  │                           + PostGIS Extension                                │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                         EXTERNAL SERVICES                                           │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │
+│  │ Google Maps │ │   Stripe    │ │   Twilio    │ │ Firebase    │ │    AWS      │  │
+│  │     API     │ │  Payments   │ │  SMS/Voice  │ │  FCM/APN    │ │     S3      │  │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Technology Stack
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Mobile Apps** | React Native / Flutter | Cross-platform rider & driver apps |
+| **Admin Panel** | React.js + TypeScript | Web dashboard |
+| **API Gateway** | Node.js / Go | REST API, authentication |
+| **WebSocket** | Socket.io / Go | Real-time location tracking |
+| **Database** | PostgreSQL + PostGIS | Primary data store + geospatial |
+| **Cache** | Redis | Sessions, geospatial queries, caching |
+| **Message Queue** | Apache Kafka | Event streaming, async processing |
+| **Coordination** | Apache Zookeeper | Distributed locks (driver assignment) |
+| **Notifications** | Firebase FCM + APNs | Push notifications |
+| **Maps** | Google Maps API | Geocoding, directions, ETA |
+| **Payments** | Stripe / Razorpay | Payment processing |
+| **Storage** | AWS S3 | Documents, images |
+| **Hosting** | AWS / GCP | Cloud infrastructure |
+
+---
+
+## Core Workflows
+
+### 1. Ride Booking Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           RIDE BOOKING WORKFLOW                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  RIDER                    SYSTEM                         DRIVER                  │
+│    │                        │                              │                     │
+│    │ 1. Enter destination   │                              │                     │
+│    │─────────────────────▶  │                              │                     │
+│    │                        │                              │                     │
+│    │ 2. Fare estimate       │                              │                     │
+│    │◀─────────────────────  │                              │                     │
+│    │                        │                              │                     │
+│    │ 3. Confirm booking     │                              │                     │
+│    │─────────────────────▶  │                              │                     │
+│    │                        │                              │                     │
+│    │                        │ 4. Find nearby drivers       │                     │
+│    │                        │    (GEORADIUS 5km)           │                     │
+│    │                        │                              │                     │
+│    │                        │ 5. Acquire lock (Zookeeper)  │                     │
+│    │                        │                              │                     │
+│    │                        │ 6. Send ride request         │                     │
+│    │                        │────────────────────────────▶ │                     │
+│    │                        │                              │                     │
+│    │                        │ 7. Accept/Decline            │                     │
+│    │                        │◀──────────────────────────── │                     │
+│    │                        │                              │                     │
+│    │ 8. Driver assigned     │                              │                     │
+│    │◀─────────────────────  │                              │                     │
+│    │                        │                              │                     │
+│    │ 9. Real-time tracking  │  Location updates (WS)       │                     │
+│    │◀───────────────────────│─────────────────────────────│                     │
+│    │                        │                              │                     │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2. Trip Lifecycle
+
+```
+      ┌─────────┐
+      │ PENDING │ ──── Ride requested, finding driver
+      └────┬────┘
+           │
+           ▼
+      ┌─────────┐
+      │ MATCHED │ ──── Driver assigned and accepted
+      └────┬────┘
+           │
+           ▼
+   ┌───────────────┐
+   │DRIVER_ARRIVED │ ──── Driver reached pickup point
+   └───────┬───────┘
+           │
+           ▼
+    ┌─────────────┐
+    │ IN_PROGRESS │ ──── Trip started, fare meter running
+    └──────┬──────┘
+           │
+           ▼
+     ┌───────────┐
+     │ COMPLETED │ ──── Trip ended, payment processed
+     └───────────┘
+
+  CANCELLATION STATES:
+  ─────────────────────
+  ┌────────────────────┐   ┌─────────────────────┐
+  │ CANCELLED_BY_RIDER │   │ CANCELLED_BY_DRIVER │
+  └────────────────────┘   └─────────────────────┘
+```
+
+### 3. Fare Calculation
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           FARE CALCULATION FORMULA                               │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  Fare = (Base Fare + Distance Fare + Time Fare + Wait Fare) × Surge            │
+│         + Booking Fee + Tolls - Discount                                         │
+│                                                                                  │
+│  Where:                                                                          │
+│  ─────────────────────────────────────────────────────────────────────────────  │
+│  Base Fare     = Fixed starting charge (e.g., $2.50)                            │
+│  Distance Fare = Distance (km) × Per-km rate (e.g., 10km × $1.50 = $15)         │
+│  Time Fare     = Duration (min) × Per-min rate (e.g., 20min × $0.30 = $6)       │
+│  Wait Fare     = Wait time after 5 min × Wait rate (e.g., 3min × $0.30 = $0.90) │
+│  Surge         = Demand multiplier (1.0x to 3.0x)                               │
+│  Booking Fee   = Platform fee (e.g., $1.00)                                     │
+│  Tolls         = Estimated toll charges                                         │
+│  Discount      = Promo code discount                                            │
+│                                                                                  │
+│  EXAMPLE:                                                                        │
+│  ─────────────────────────────────────────────────────────────────────────────  │
+│  Base Fare:      $2.50                                                          │
+│  Distance:       10 km × $1.50 = $15.00                                         │
+│  Time:           20 min × $0.30 = $6.00                                         │
+│  Wait:           0 min = $0.00                                                  │
+│  Subtotal:       $23.50                                                         │
+│  Surge (1.5x):   $23.50 × 1.5 = $35.25                                          │
+│  Booking Fee:    $1.00                                                          │
+│  Tolls:          $2.00                                                          │
+│  Discount:       -$5.00 (promo)                                                 │
+│  ─────────────────────────────────────────────────────────────────────────────  │
+│  TOTAL:          $33.25                                                         │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Non-Functional Requirements
 
-### Scale
-| Metric | Target |
-|--------|--------|
-| Users & Drivers | Millions globally |
-| Concurrent Rides | Hundreds of thousands at peak hours |
-
-### Performance & Consistency
-| Aspect | Requirement |
-|--------|-------------|
-| CAP Theorem | Availability >> Consistency (users) BUT Consistency >> Availability (driver assignment) |
-| Ride Matching | Prevent any driver from being assigned multiple rides simultaneously (strong consistency) |
-| Latency | <1 sec for driver assignment, real-time location updates every 3-5 seconds |
-
----
-
-## Core Entities
-
-### Entity Relationship Diagram
-
-```
-┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-│   RIDER     │       │    TRIP     │       │   DRIVER    │
-├─────────────┤       ├─────────────┤       ├─────────────┤
-│ rider_id    │───────│ rider_id    │───────│ driver_id   │
-│ name        │       │ driver_id   │       │ name        │
-│ email       │       │ trip_id     │       │ vehicle_type│
-│ phone       │       │ pickup_loc  │       │ vehicle_model│
-│ payment_    │       │ drop_loc    │       │ license_plate│
-│  methods    │       │ status      │       │ status      │
-│ avg_rating  │       │ fare        │       │ avg_rating  │
-│ current_loc │       │ timestamps  │       │ current_loc │
-└─────────────┘       └─────────────┘       └─────────────┘
-                             │
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              ▼              ▼
-       ┌───────────┐  ┌───────────┐  ┌───────────┐
-       │  RATING   │  │  PAYMENT  │  │   FARE    │
-       ├───────────┤  ├───────────┤  ├───────────┤
-       │ rating_id │  │payment_id │  │ fare_id   │
-       │ trip_id   │  │ trip_id   │  │ base_fare │
-       │ driver_   │  │ amount    │  │ distance_ │
-       │  rating   │  │ method    │  │  fare     │
-       │ rider_    │  │ status    │  │ time_fare │
-       │  rating   │  └───────────┘  │ surge_mult│
-       │ feedback  │                 │ total     │
-       └───────────┘                 └───────────┘
-```
-
----
-
-## API Design
-
-### User/Rider APIs
-
-| Method | Endpoint | Description | Request/Response |
-|--------|----------|-------------|------------------|
-| `POST` | `/v1/api/fare/estimate` | Get fare estimation with Request ID | `{pickup, drop, vehicleType}` → fare breakdown |
-| `POST` | `/v1/api/ride/request` | Request a ride | `{pickup, drop, vehicleType}` → `rideId` with driver details |
-| `GET` | `/v1/api/ride/history` | Get ride history for user | Returns array of past rides |
-| `POST` | `/v1/api/ride/{rideId}/cancel` | Cancel ride request | `{reason}` → status |
-| `POST` | `/v1/api/ride/{rideId}/rate` | Rate driver after trip | `{rating, feedback}` |
-
-### Driver APIs
-
-| Method | Endpoint | Description | Request/Response |
-|--------|----------|-------------|------------------|
-| `WS` | `/v1/driver/location` | WebSocket: Update location continuously | `{lat, lon}` every 3-5 sec |
-| `POST` | `/v1/api/ride/rides` | Accept/deny ride request | `{requestId, accept/deny}` → `rideId` |
-| `POST` | `/v1/api/ride/{rideId}/start` | Mark trip as started | Triggers fare meter |
-| `POST` | `/v1/api/ride/{rideId}/complete` | Mark trip as completed | Triggers payment |
-
----
-
-## High Level Design (HLD)
-
-### Architecture Diagram
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                              CLIENTS                                          │
-│  ┌─────────────┐                                      ┌─────────────┐        │
-│  │  Rider App  │                                      │ Driver App  │        │
-│  └──────┬──────┘                                      └──────┬──────┘        │
-└─────────┼────────────────────────────────────────────────────┼───────────────┘
-          │                                                    │
-          ▼                                                    ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│                    LOAD BALANCER + API GATEWAY                                  │
-│         (Authentication, Authorization, Rate Limiting, Traffic Distribution)    │
-└────────────────────────────────────────────────────────────────────────────────┘
-          │
-          ├───────────────┬───────────────┬──────────────┬───────────────┐
-          ▼               ▼               ▼              ▼               ▼
-┌─────────────────┐ ┌─────────────┐ ┌───────────────┐ ┌─────────────┐ ┌─────────────┐
-│  Ride Service   │ │ Driver      │ │ Location Map  │ │   Rating    │ │  Payment    │
-│  (Fare Calc)    │ │ Matching    │ │ Service       │ │  Service    │ │  Service    │
-│                 │ │ Service     │ │ (GMaps/Apple) │ │             │ │             │
-└────────┬────────┘ └──────┬──────┘ └───────────────┘ └──────┬──────┘ └──────┬──────┘
-         │                 │                                  │              │
-         │                 │                                  ▼              ▼
-         │                 │                          ┌─────────────┐ ┌─────────────┐
-         │                 │                          │ Rating DB   │ │ Payment DB  │
-         │                 │                          │ (PostgreSQL)│ │ (PostgreSQL)│
-         │                 │                          └─────────────┘ └─────────────┘
-         │                 │
-         ▼                 ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                              REDIS CLUSTER                                        │
-│  ┌─────────────────────┐  ┌──────────────────┐  ┌────────────────────────────┐   │
-│  │ Driver Availability │  │ Driver Locations │  │ Surge Multipliers          │   │
-│  │ Status (TTL: 5min)  │  │ (Geospatial)     │  │ (TTL: 2min)                │   │
-│  └─────────────────────┘  └──────────────────┘  └────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                              ZOOKEEPER CLUSTER                                    │
-│                        (Distributed Locks - Driver Assignment)                    │
-│                        Ephemeral Nodes: /locks/drivers/{driver_id}                │
-└──────────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                              KAFKA CLUSTER                                        │
-│   Topics: ride.requested | ride.matched | trip.started | trip.completed          │
-│           driver.ride_offered | driver.location_updated                          │
-└──────────────────────────────────────────────────────────────────────────────────┘
-          │                                                    │
-          ▼                                                    ▼
-┌─────────────────────┐                              ┌─────────────────────┐
-│ Notification Service│                              │ Trip Update Consumer│
-│ (FCM + APN)         │                              │ (Analytics/History) │
-└─────────────────────┘                              └─────────────────────┘
-          │
-          ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              DATABASES (PostgreSQL)                              │
-│   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │
-│   │  Riders DB  │    │  Drivers DB │    │   Ride DB   │    │  Payments DB│      │
-│   └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘      │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Component Descriptions
-
-| Component | Responsibility New |
-|-----------|---------------|
-| **Load Balancer + API Gateway** | Authentication, authorization, rate limiting, traffic distribution |
-| **Ride Service** | Calculates estimated fare based on pickup/drop distance, surge pricing, vehicle type |
-| **Driver Matching Service** | Geo-proximity search to find nearby available drivers, assigns driver to ride request |
-| **Location Map Service** | Provides mapping, routing, ETA calculations via Google Maps/Apple Maps |
-| **Rating Service** | Stores and retrieves rider/driver ratings and feedback |
-| **Payment Service** | Processes payments via payment gateway (Stripe/Razorpay), handles refunds |
-| **Location Update Service** | WebSocket server - ingests driver location pings every 3-5 seconds, updates Redis |
-| **Redis** | Driver availability status (TTL), driver locations (geospatial index), ride request status |
-| **Zookeeper** | Distributed lock for driver assignment - prevents double assignment, ephemeral nodes |
-| **Notification Service** | FCM (Firebase Cloud Messaging) + APN (Apple Push Notification) for real-time notifications |
-| **Kafka** | Event streaming for trip updates, location history, analytics, notifications |
-| **Trip Update Consumer** | Consumes Kafka events, persists location history, generates analytics |
-
----
-
-## Low Level Design (LLD)
-
-### Step 1: Fare Estimation (Surge Calculator)
-
-```
-┌────────────┐    POST /v1/api/fare/estimate    ┌──────────────┐
-│ Rider App  │─────────────────────────────────▶│ Ride Service │
-└────────────┘   {pickup, drop, vehicle_type}   └───────┬──────┘
-                                                        │
-                                                        ▼
-                                               ┌──────────────────┐
-                                               │ Location Map Svc │
-                                               │ (Google Maps API)│
-                                               └────────┬─────────┘
-                                                        │
-                                               {distance: 5.2km, duration: 12min}
-                                                        │
-                                                        ▼
-                                               ┌──────────────────┐
-                                               │ Surge Calculator │
-                                               │ (Redis lookup)   │
-                                               └────────┬─────────┘
-                                                        │
-                                               surge_multiplier: 1.5x
-                                                        │
-                                                        ▼
-┌────────────┐    {fare: $20.85, breakdown}    ┌──────────────────┐
-│ Rider App  │◀────────────────────────────────│ Ride Service     │
-└────────────┘                                 └──────────────────┘
-```
-
-**Fare Calculation:**
-```
-Base Fare      = $2.50 (flat charge)
-Distance Fare  = 5.2 km × $1.50/km = $7.80
-Time Fare      = 12 min × $0.30/min = $3.60
-Subtotal       = $2.50 + $7.80 + $3.60 = $13.90
-Surge (1.5×)   = $13.90 × 1.5 = $20.85
-```
-
-### Step 2: Ride Request & Driver Matching (Geo-search)
-
-```
-┌────────────┐  POST /v1/api/ride/request  ┌──────────────┐
-│ Rider App  │───────────────────────────▶│ Ride Service │
-└────────────┘                             └───────┬──────┘
-                                                   │
-                                                   ▼
-                                          ┌────────────────────┐
-                                          │ Validate & Create  │
-                                          │ Ride Request       │
-                                          └─────────┬──────────┘
-                                                    │
-                                                    ▼ Kafka: ride.requested
-                                          ┌────────────────────┐
-                                          │ Driver Matching    │
-                                          │ Service            │
-                                          └─────────┬──────────┘
-                                                    │
-              GEORADIUS drivers:available           │
-              {pickup_lon} {pickup_lat} 5km         │
-                                                    ▼
-                                          ┌────────────────────┐
-                                          │      REDIS         │
-                                          │  (Geospatial)      │
-                                          └─────────┬──────────┘
-                                                    │
-              Results: [{D1, 0.8km}, {D2, 1.2km}, {D3, 2.5km}]
-                                                    │
-                                                    ▼
-                                          ┌────────────────────┐
-                                          │ Zookeeper Lock     │
-                                          │ (Prevent double    │
-                                          │  assignment)       │
-                                          └────────────────────┘
-```
-
-### Step 3: Driver Locking with Zookeeper (CRITICAL)
-
-**Purpose:** Prevent double assignment - ensure one driver assigned to only one ride at a time.
-
-```
-Zookeeper Structure:
-/locks/drivers/{driver_id}/{request_id}  (ephemeral sequential node)
-
-┌─────────────────────────────────────────────────────────────────┐
-│                        ZOOKEEPER                                 │
-│                                                                  │
-│  /locks/drivers/                                                 │
-│       │                                                          │
-│       ├── D1/                                                    │
-│       │    ├── request_R1_seq0001  ← Lock Acquired (lowest seq) │
-│       │    ├── request_R2_seq0002  ← Lock Failed (try next)     │
-│       │    └── request_R3_seq0003  ← Lock Failed (try next)     │
-│       │                                                          │
-│       ├── D2/                                                    │
-│       │    └── request_R2_seq0001  ← Lock Acquired              │
-│       │                                                          │
-│       └── D3/                                                    │
-│            └── (empty - available)                               │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Lock Acquisition Flow:**
-```
-1. Create ephemeral node: CREATE /locks/drivers/D1/{request_id} (ephemeral, sequence)
-2. Get all children: GET_CHILDREN /locks/drivers/D1 ORDER BY sequence
-3. If our node is first → Lock acquired
-4. If another node with lower sequence → Lock failed, try next driver
-```
-
-**Session Timeout:** 30 seconds - if service crashes or driver doesn't respond → Zookeeper auto-deletes node → lock released
-
-### Step 4: Driver Accept/Decline
-
-```
-┌────────────────┐   POST /v1/api/ride/rides   ┌──────────────────┐
-│  Driver App    │────────────────────────────▶│   Ride Service   │
-└────────────────┘   {requestId, 'accept'}     └────────┬─────────┘
-                                                        │
-                                                        ▼
-                                              ┌──────────────────────┐
-                                              │ Validate Zookeeper   │
-                                              │ lock still held      │
-                                              └──────────┬───────────┘
-                                                         │
-                                                         ▼
-                                              ┌──────────────────────┐
-                                              │ BEGIN TRANSACTION    │
-                                              │ - INSERT trip        │
-                                              │ - UPDATE ride_request│
-                                              │ - UPDATE driver      │
-                                              │ COMMIT               │
-                                              └──────────┬───────────┘
-                                                         │
-                                                         ▼
-                                              ┌──────────────────────┐
-                                              │ Update Redis         │
-                                              │ - trip:{id}:status   │
-                                              │ - DEL ride_request   │
-                                              └──────────┬───────────┘
-                                                         │
-                                                         ▼
-                                              ┌──────────────────────┐
-                                              │ Release Zookeeper    │
-                                              │ Lock                 │
-                                              └──────────┬───────────┘
-                                                         │
-                                                         ▼ Kafka: ride.matched
-┌────────────────┐                            ┌──────────────────────┐
-│  Rider App     │◀───────────────────────────│ Notification Service │
-└────────────────┘    Push: "Driver assigned!" └──────────────────────┘
-```
-
-### Step 5: Real-Time Location Tracking (WebSocket)
-
-```
-┌───────────────────────────────────────────────────────────────────────────────┐
-│                         REAL-TIME LOCATION TRACKING                            │
-├───────────────────────────────────────────────────────────────────────────────┤
-│                                                                                │
-│  ┌────────────┐    WS /v1/driver/location    ┌────────────────────────┐       │
-│  │ Driver App │═══════════════════════════════│ Location Update Service│       │
-│  └────────────┘   {lat, lon} every 3-5 sec   │    (WebSocket Server)  │       │
-│                                               └───────────┬────────────┘       │
-│                                                           │                    │
-│                    ┌──────────────────────────────────────┼───────────────┐   │
-│                    │                      │               │               │   │
-│                    ▼                      ▼               ▼               ▼   │
-│           ┌──────────────┐      ┌──────────────┐  ┌─────────────┐  ┌────────┐│
-│           │ Redis        │      │ Redis Pub/Sub│  │   KAFKA     │  │ Notify ││
-│           │ GEOADD       │      │ PUBLISH      │  │ location    │  │ if     ││
-│           │ location     │      │ driver_loc   │  │ .updated    │  │ arrived││
-│           └──────────────┘      └──────┬───────┘  └─────────────┘  └────────┘│
-│                                        │                                      │
-│                                        ▼                                      │
-│                               ┌──────────────────┐                            │
-│                               │  WebSocket GW    │                            │
-│                               │  (subscribes to  │                            │
-│                               │   Pub/Sub)       │                            │
-│                               └────────┬─────────┘                            │
-│                                        │                                      │
-│                                        ▼                                      │
-│  ┌────────────┐    WS /v1/trip/{id}/track    ┌────────────────────────┐      │
-│  │ Rider App  │◀═════════════════════════════│ {driver_loc, eta: 4min}│      │
-│  └────────────┘                              └────────────────────────┘      │
-│                                                                               │
-└───────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Step 6-7: Trip Start & Completion
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                           TRIP LIFECYCLE                                      │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                               │
-│  TRIP START                                                                   │
-│  ┌────────────┐   POST /v1/api/ride/{id}/start   ┌────────────────────┐      │
-│  │ Driver App │─────────────────────────────────▶│    Ride Service    │      │
-│  └────────────┘                                  └─────────┬──────────┘      │
-│                                                            │                  │
-│                UPDATE trips SET status='IN_PROGRESS'       │                  │
-│                Start fare meter                            │                  │
-│                                                            ▼                  │
-│  ┌────────────┐      Push: "Trip started!"       ┌────────────────────┐      │
-│  │ Rider App  │◀─────────────────────────────────│ Notification Svc   │      │
-│  └────────────┘                                  └────────────────────┘      │
-│                                                                               │
-│  ─────────────────────────────────────────────────────────────────────────   │
-│                                                                               │
-│  TRIP COMPLETION                                                              │
-│  ┌────────────┐   POST /v1/api/ride/{id}/complete  ┌────────────────────┐   │
-│  │ Driver App │───────────────────────────────────▶│    Ride Service    │   │
-│  └────────────┘                                    └─────────┬──────────┘   │
-│                                                              │               │
-│                                                              ▼               │
-│                                                    ┌──────────────────────┐  │
-│                                                    │ Calculate Final Fare │  │
-│                                                    │ - Total distance     │  │
-│                                                    │ - Total time         │  │
-│                                                    │ - Apply surge        │  │
-│                                                    └──────────┬───────────┘  │
-│                                                               │              │
-│                                                               ▼              │
-│                                                    ┌──────────────────────┐  │
-│                                                    │   Payment Service    │  │
-│                                                    │   (Stripe/Razorpay)  │  │
-│                                                    └──────────┬───────────┘  │
-│                                                               │              │
-│  ┌────────────┐    Receipt + Payment confirmation  ┌─────────▼──────────┐   │
-│  │ Rider App  │◀───────────────────────────────────│ Notification Svc   │   │
-│  └────────────┘                                    └────────────────────┘   │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Step 8: Surge Pricing Algorithm
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                        SURGE PRICING CALCULATOR                               │
-│                        (Runs every 60 seconds per geohash area)               │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                               │
-│  1. Query Available Drivers:                                                  │
-│     GEORADIUS drivers:available {area_center} 5 km → count = 15              │
-│                                                                               │
-│  2. Query Pending Requests (last 10 min):                                    │
-│     SELECT COUNT(*) FROM ride_requests WHERE status='PENDING' → count = 45   │
-│                                                                               │
-│  3. Calculate Ratio:                                                          │
-│     demand_ratio = 45 / 15 = 3.0                                             │
-│                                                                               │
-│  4. Determine Multiplier:                                                     │
-│     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  Demand Ratio    │  Surge Level    │  Multiplier                │      │
-│     ├───────────────────┼─────────────────┼───────────────────────────┤      │
-│     │  < 1.2           │  No Surge       │  1.0×                      │      │
-│     │  1.2 - 2.0       │  Low            │  1.2×                      │      │
-│     │  2.0 - 3.0       │  Medium         │  1.5×                      │      │
-│     │  3.0 - 5.0       │  High           │  1.8×                      │      │
-│     │  >= 5.0          │  Very High      │  2.0× - 3.0× (max cap)     │      │
-│     └─────────────────────────────────────────────────────────────────┘      │
-│                                                                               │
-│  5. Store in Redis:                                                           │
-│     SET surge_multiplier:{geohash} 1.8 EX 120  (2 min TTL)                   │
-│                                                                               │
-│  6. Smoothing (prevent sudden jumps):                                         │
-│     new_surge = 0.7 × old_surge + 0.3 × calculated_surge                     │
-│                                                                               │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Database Schema
-
-### Riders Table (PostgreSQL)
-
-```sql
-CREATE TABLE riders (
-    rider_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name            VARCHAR(255) NOT NULL,
-    email           VARCHAR(255) UNIQUE NOT NULL,
-    phone           VARCHAR(20) UNIQUE NOT NULL,
-    payment_methods JSONB DEFAULT '[]',  -- [{type: 'card', last4, stripe_customer_id}]
-    avg_rating      DECIMAL(3,2) DEFAULT 5.00,
-    total_trips     INT DEFAULT 0,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_riders_email ON riders(email);
-CREATE INDEX idx_riders_phone ON riders(phone);
-```
-
-### Drivers Table (PostgreSQL)
-
-```sql
-CREATE TABLE drivers (
-    driver_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name            VARCHAR(255) NOT NULL,
-    email           VARCHAR(255) UNIQUE NOT NULL,
-    phone           VARCHAR(20) NOT NULL,
-    vehicle_type    VARCHAR(20) CHECK (vehicle_type IN ('sedan', 'suv', 'bike', 'auto')),
-    vehicle_model   VARCHAR(100),           -- e.g., 'Toyota Camry 2020'
-    license_plate   VARCHAR(20) NOT NULL,
-    status          VARCHAR(20) DEFAULT 'OFFLINE' CHECK (status IN ('AVAILABLE', 'BUSY', 'OFFLINE', 'IN_TRIP')),
-    current_trip_id UUID REFERENCES trips(trip_id),
-    avg_rating      DECIMAL(3,2) DEFAULT 5.00,
-    total_trips     INT DEFAULT 0,
-    acceptance_rate DECIMAL(5,2) DEFAULT 100.00,
-    last_online_at  TIMESTAMP,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_drivers_status ON drivers(status);
-CREATE INDEX idx_drivers_vehicle_type ON drivers(vehicle_type);
-CREATE INDEX idx_drivers_current_trip ON drivers(current_trip_id);
-```
-
-### Trips/Rides Table (PostgreSQL with PostGIS)
-
-```sql
-CREATE EXTENSION IF NOT EXISTS postgis;
-
-CREATE TABLE trips (
-    trip_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    rider_id         UUID NOT NULL REFERENCES riders(rider_id),
-    driver_id        UUID REFERENCES drivers(driver_id),
-    pickup_location  GEOGRAPHY(Point, 4326) NOT NULL,
-    drop_location    GEOGRAPHY(Point, 4326) NOT NULL,
-    status           VARCHAR(30) DEFAULT 'PENDING' CHECK (status IN (
-                        'PENDING', 'MATCHED', 'DRIVER_ARRIVED', 
-                        'IN_PROGRESS', 'COMPLETED', 
-                        'CANCELLED_BY_RIDER', 'CANCELLED_BY_DRIVER'
-                     )),
-    vehicle_type     VARCHAR(20) NOT NULL,
-    estimated_fare   DECIMAL(10,2),
-    actual_fare      DECIMAL(10,2),
-    surge_multiplier DECIMAL(3,2) DEFAULT 1.00,
-    distance_km      DECIMAL(10,2),
-    duration_min     INT,
-    requested_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    matched_at       TIMESTAMP,
-    start_time       TIMESTAMP,
-    end_time         TIMESTAMP,
-    payment_status   VARCHAR(20) DEFAULT 'PENDING' CHECK (payment_status IN (
-                        'PENDING', 'COMPLETED', 'FAILED', 'REFUNDED'
-                     )),
-    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_trips_rider ON trips(rider_id, created_at);
-CREATE INDEX idx_trips_driver ON trips(driver_id, created_at);
-CREATE INDEX idx_trips_status_location ON trips USING GIST (pickup_location) WHERE status = 'PENDING';
-```
-
-### Ratings Table (PostgreSQL)
-
-```sql
-CREATE TABLE ratings (
-    rating_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    trip_id         UUID UNIQUE NOT NULL REFERENCES trips(trip_id),
-    rider_id        UUID NOT NULL REFERENCES riders(rider_id),
-    driver_id       UUID NOT NULL REFERENCES drivers(driver_id),
-    driver_rating   INT CHECK (driver_rating BETWEEN 1 AND 5),   -- Rider rates driver
-    rider_rating    INT CHECK (rider_rating BETWEEN 1 AND 5),    -- Driver rates rider
-    rider_feedback  TEXT,
-    driver_feedback TEXT,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Note: Anonymous - drivers see rating but not rider identity in aggregated form
-CREATE INDEX idx_ratings_driver ON ratings(driver_id);
-CREATE INDEX idx_ratings_rider ON ratings(rider_id);
-```
-
-### Payments Table (PostgreSQL)
-
-```sql
-CREATE TABLE payments (
-    payment_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    trip_id           UUID UNIQUE NOT NULL REFERENCES trips(trip_id),
-    amount            DECIMAL(10,2) NOT NULL,
-    currency          VARCHAR(3) DEFAULT 'USD',
-    payment_method    VARCHAR(20) CHECK (payment_method IN ('card', 'wallet', 'cash', 'upi')),
-    stripe_payment_id VARCHAR(255),  -- External payment gateway reference
-    status            VARCHAR(20) DEFAULT 'PENDING' CHECK (status IN (
-                        'PENDING', 'COMPLETED', 'FAILED', 'REFUNDED'
-                      )),
-    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at      TIMESTAMP
-);
-
-CREATE INDEX idx_payments_trip ON payments(trip_id);
-CREATE INDEX idx_payments_status ON payments(status);
-```
-
-### Location History Table (for Analytics)
-
-```sql
-CREATE TABLE location_history (
-    id          BIGSERIAL PRIMARY KEY,
-    driver_id   UUID NOT NULL REFERENCES drivers(driver_id),
-    trip_id     UUID REFERENCES trips(trip_id),
-    location    GEOGRAPHY(Point, 4326) NOT NULL,
-    speed       DECIMAL(5,2),  -- km/h
-    accuracy    DECIMAL(5,2),  -- meters
-    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Partition by month for historical data
-CREATE INDEX idx_location_history_driver ON location_history(driver_id, recorded_at);
-CREATE INDEX idx_location_history_trip ON location_history(trip_id);
-```
-
-### Redis Data Structures
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              REDIS DATA STRUCTURES                               │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│  GEOSPATIAL INDEX (Driver Locations & Availability)                             │
-│  ──────────────────────────────────────────────────                             │
-│  Key: drivers:available                                                          │
-│  Type: GEOSPATIAL INDEX                                                          │
-│  Commands: GEOADD, GEORADIUS, GEOREM                                             │
-│  Usage: GEORADIUS drivers:available {lon} {lat} 5 km WITHDIST ASC               │
-│                                                                                  │
-│  ─────────────────────────────────────────────────────────────────────────────  │
-│                                                                                  │
-│  DRIVER STATUS                                                                   │
-│  ──────────────                                                                  │
-│  Key: driver:{driverId}:status                                                   │
-│  Type: STRING                                                                    │
-│  Value: AVAILABLE | BUSY | OFFLINE                                               │
-│  TTL: 300 seconds (5 min) - refreshed by heartbeat                              │
-│                                                                                  │
-│  ─────────────────────────────────────────────────────────────────────────────  │
-│                                                                                  │
-│  DRIVER LOCATION CACHE                                                           │
-│  ─────────────────────                                                           │
-│  Key: location:{driverId}                                                        │
-│  Type: STRING (JSON)                                                             │
-│  Value: {lat, lon, timestamp}                                                    │
-│  TTL: 60 seconds (1 min) - updated every 3-5 sec via WebSocket                  │
-│                                                                                  │
-│  ─────────────────────────────────────────────────────────────────────────────  │
-│                                                                                  │
-│  TRIP STATUS                                                                     │
-│  ───────────                                                                     │
-│  Key: trip:{tripId}:status                                                       │
-│  Type: STRING                                                                    │
-│  Value: MATCHED | IN_PROGRESS | COMPLETED                                        │
-│  TTL: 7200 seconds (2 hour max trip)                                            │
-│                                                                                  │
-│  ─────────────────────────────────────────────────────────────────────────────  │
-│                                                                                  │
-│  SURGE MULTIPLIER                                                                │
-│  ────────────────                                                                │
-│  Key: surge_multiplier:{geohash}                                                 │
-│  Type: STRING                                                                    │
-│  Value: decimal (e.g., 1.5)                                                      │
-│  TTL: 120 seconds (2 min) - recalculated every 60 sec                           │
-│                                                                                  │
-│  ─────────────────────────────────────────────────────────────────────────────  │
-│                                                                                  │
-│  RIDE REQUEST CACHE                                                              │
-│  ──────────────────                                                              │
-│  Key: ride_request:{requestId}                                                   │
-│  Type: STRING (JSON)                                                             │
-│  Value: {rider_id, pickup, drop, vehicle_type, estimated_fare}                  │
-│  TTL: 600 seconds (10 min) - expires if no driver found                         │
-│                                                                                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Kafka Topics
-
-| Topic | Description | Producers | Consumers |
-|-------|-------------|-----------|-----------|
-| `ride.requested` | Ride request created | Ride Service | Driver Matching Service |
-| `driver.ride_offered` | Driver selected for matching | Driver Matching Service | Notification Service |
-| `ride.matched` | Driver accepted ride | Ride Service | Notification Service, Analytics |
-| `trip.started` | Driver picked up rider | Ride Service | Notification Service, Analytics |
-| `trip.completed` | Trip ended, payment processed | Ride Service | Notification Service, Analytics |
-| `driver.location_updated` | Real-time location ping (100K+ msg/sec) | Location Update Service | Trip Update Consumer |
-
-### Zookeeper Structure (Driver Locks)
-
-```
-/locks/
-└── drivers/
-    ├── {driver_id_1}/
-    │   └── {request_id}_seq0001  (ephemeral sequential node)
-    ├── {driver_id_2}/
-    │   └── {request_id}_seq0001
-    └── {driver_id_3}/
-        └── (empty - available)
-
-Session timeout: 30 seconds
-Purpose: Prevent double assignment - only one request can lock a driver at a time
-```
-
----
-
-## Scaling & Optimization
-
-### Key Techniques
-
-| Technique | Description | Performance |
-|-----------|-------------|-------------|
-| **Redis Geospatial** | GEORADIUS for proximity search | O(log(N)), ~10ms for 1M drivers |
-| **Zookeeper Locking** | Ephemeral nodes prevent double assignment | <10ms lock acquisition |
-| **WebSocket** | Persistent connections vs HTTP polling | 100x less traffic |
-| **Kafka Streaming** | Decouples services, 100K+ events/sec | Async processing |
-| **Database Sharding** | Shard by geohash (trips) or driver_id | Horizontal scaling |
-| **CDN** | Static assets (photos, map tiles) | 95% cache hit rate |
-
-### Caching Strategy
-
-| Data | TTL | Refresh |
-|------|-----|---------|
-| Driver Status | 5 min | Heartbeat every 30 sec |
-| Driver Location | 1 min | WebSocket every 3-5 sec |
-| Surge Multiplier | 2 min | Recalculated every 60 sec |
-| Fare Estimate | 5 min | N/A (estimate valid for 5 min) |
-| Ride Request | 10 min | Expires if no driver found |
-
-### Performance Targets
+### Performance
 
 | Metric | Target |
 |--------|--------|
-| Driver Assignment | <1 second |
-| Geospatial Query (1M drivers) | ~10ms |
-| Lock Acquisition | <10ms |
-| Push Notification Latency | 1-3 seconds |
-| WebSocket In-App Latency | <100ms |
+| API Response Time | < 200ms (p95) |
+| Driver Matching | < 1 second |
+| Location Update | Every 3-5 seconds |
+| Push Notification | < 3 seconds |
+| System Availability | 99.9% uptime |
+
+### Security
+
+| Aspect | Implementation |
+|--------|----------------|
+| Authentication | JWT tokens, refresh tokens |
+| API Security | Rate limiting, input validation |
+| Data Encryption | TLS 1.3 in transit, AES-256 at rest |
+| PCI Compliance | Payment data via Stripe (PCI DSS) |
+| GDPR | Data deletion, export capabilities |
+
+### Scalability
+
+| Component | Scaling Strategy |
+|-----------|------------------|
+| API Servers | Horizontal auto-scaling |
+| Database | Read replicas, sharding by city |
+| Redis | Cluster mode with sharding |
+| WebSocket | Sticky sessions, Redis Pub/Sub |
+| Kafka | Partition by driver/rider ID |
 
 ---
 
-## Key Interview Tips
+## Quick Reference
 
-### Critical Points
+### Status Codes
+```
+TRIP STATUS:
+PENDING → MATCHED → DRIVER_ARRIVED → IN_PROGRESS → COMPLETED
+                                                 → CANCELLED
 
-⚠️ **MUST use Zookeeper distributed locking for driver assignment**
-- Without lock, multiple ride requests can assign same driver simultaneously
-- Double booking → terrible UX + revenue loss
-- Ephemeral nodes ensure automatic lock release on failure
+DRIVER STATUS:
+PENDING → DOCUMENTS_UNDER_REVIEW → APPROVED → ACTIVE → SUSPENDED
 
-⭐ **How to prevent double assignment?**
-- Zookeeper ephemeral sequential nodes
-- Request R1 creates `/locks/drivers/D1/request_R1_seq0001`
-- Concurrent request R2 gets seq0002 → sees seq0001 exists → lock failed → tries next driver
+PAYMENT STATUS:
+PENDING → COMPLETED / FAILED / REFUNDED
+```
 
-💡 **Redis Geospatial optimization**
-- Use `GEORADIUS` for sub-10ms proximity search on 1M drivers
-- Maintain separate indexes per vehicle type: `drivers:available:sedan`, `drivers:available:suv`
-
-⭐ **WebSocket vs HTTP polling**
-- Polling: 100K riders × 20 req/min = 33K req/sec overhead
-- WebSocket: Persistent connection, send only when location changes, 100x less traffic
-
-⚠️ **NEVER trust Redis alone for driver availability**
-- Redis is cache with TTL (ephemeral)
-- Always validate driver status in DB before final assignment
-
-💡 **Surge pricing smoothing**
-- Use exponential moving average: `new_surge = 0.7×old + 0.3×calculated`
-- Prevents sudden jumps, feels fairer to users
-- Max cap at 3.0× prevents price gouging
+### Key Business Rules
+```
+1. Driver can only be assigned to ONE ride at a time (Zookeeper lock)
+2. Rider can have only ONE active ride at a time
+3. Cancellation fee applies after driver assigned (>2 min window)
+4. Wait time charges start after 5 minutes at pickup
+5. Driver acceptance rate below 85% triggers warnings
+6. Driver rating below 4.0 may result in suspension
+7. Surge pricing capped at 3.0x maximum
+8. Promo codes validated at booking time
+9. Instant payouts have 1-2% processing fee
+10. Driver commission is 20-25% of fare
+```
 
 ---
 
-## Quick Reference Numbers
-
-| Category | Metric | Value |
-|----------|--------|-------|
-| **Scale** | Concurrent Rides | 100K at peak |
-| **Scale** | Location Updates | Every 3-5 sec |
-| **Latency** | Driver Assignment | <1 sec |
-| **Latency** | Geospatial Query | ~10ms |
-| **Lock** | Session Timeout | 30 sec |
-| **Pricing** | Surge Calculation | Every 60 sec |
-| **Pricing** | Max Surge | 3.0× |
-| **Cache** | Driver Status TTL | 5 min |
-| **Cache** | Location TTL | 1 min |
-| **Push** | Notification Latency | 1-3 sec |
-| **WebSocket** | In-App Latency | <100ms |
+## Repository Structure
+```
+RideSharing_SystemDesign/
+├── README.md                     # This documentation
+├── database/
+│   ├── schema.sql               # Complete database schema
+│   └── redis-commands.md        # Redis data structures
+├── diagrams/
+│   └── system-diagrams.md       # Architecture diagrams
+└── interview-cheatsheet.md      # Quick reference
+```
 
 ---
 
 ## References
 
-- [System Design Complete Course - Interview With Bunny](https://www.interviewwithbunny.com/systemdesign)
-- Google Maps Distance Matrix API
-- Redis Geospatial Commands
-- Apache Zookeeper Documentation
+- [System Design - Interview With Bunny](https://www.interviewwithbunny.com/systemdesign)
+- Google Maps Platform Documentation
 - Apache Kafka Documentation
+- Apache Zookeeper Documentation
+- Redis Geospatial Commands
+- Stripe API Documentation
