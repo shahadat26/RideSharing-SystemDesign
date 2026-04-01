@@ -188,7 +188,7 @@
 
 ### Component Descriptions
 
-| Component | Responsibility |
+| Component | Responsibility New |
 |-----------|---------------|
 | **Load Balancer + API Gateway** | Authentication, authorization, rate limiting, traffic distribution |
 | **Ride Service** | Calculates estimated fare based on pickup/drop distance, surge pricing, vehicle type |
