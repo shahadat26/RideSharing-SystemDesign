@@ -1104,6 +1104,961 @@ CREATE INDEX idx_referrals_referee ON referrals(referee_type, referee_id);
 CREATE INDEX idx_referrals_code ON referrals(referral_code);
 
 -- ============================================================================
+-- ============================================================================
+--                    PRODUCTION FEATURES - UBER GRADE
+-- ============================================================================
+-- ============================================================================
+
+-- ############################################################################
+-- #                       1. FRAUD DETECTION SYSTEM                          #
+-- ############################################################################
+
+-- ============================================================================
+-- FRAUD ALERT TYPES
+-- ============================================================================
+CREATE TYPE fraud_alert_type AS ENUM (
+    'GPS_SPOOFING',           -- Fake location detected
+    'DEVICE_TAMPERING',       -- Rooted/jailbroken device
+    'MULTIPLE_ACCOUNTS',      -- Same device, multiple accounts
+    'PROMO_ABUSE',           -- Excessive promo code usage
+    'FAKE_TRIP',             -- Trips that don't make sense
+    'PAYMENT_FRAUD',         -- Stolen cards, chargebacks
+    'RATING_MANIPULATION',   -- Fake ratings
+    'COLLUSION',             -- Driver-rider collusion
+    'VELOCITY_ABUSE',        -- Too many actions too fast
+    'IDENTITY_FRAUD'         -- Fake documents
+);
+
+CREATE TYPE fraud_severity AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL');
+CREATE TYPE fraud_status AS ENUM ('DETECTED', 'INVESTIGATING', 'CONFIRMED', 'FALSE_POSITIVE', 'RESOLVED', 'ESCALATED');
+
+-- ============================================================================
+-- FRAUD RULES TABLE (Configurable fraud detection rules)
+-- ============================================================================
+CREATE TABLE fraud_rules (
+    rule_id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Rule Definition
+    rule_name           VARCHAR(100) NOT NULL UNIQUE,
+    rule_type           fraud_alert_type NOT NULL,
+    description         TEXT,
+    
+    -- Rule Configuration (JSON for flexibility)
+    conditions          JSONB NOT NULL,
+    -- Example: {"max_speed_kmh": 200, "min_accuracy_meters": 500, "check_interval_seconds": 5}
+    
+    -- Thresholds
+    threshold_count     INT DEFAULT 1,              -- Number of violations to trigger
+    threshold_period    INTERVAL DEFAULT '1 hour',  -- Time window for counting
+    
+    -- Actions
+    severity            fraud_severity DEFAULT 'MEDIUM',
+    auto_action         VARCHAR(50),                -- WARN, BLOCK_TRIP, SUSPEND_USER, NONE
+    notify_admin        BOOLEAN DEFAULT TRUE,
+    
+    -- Status
+    is_active           BOOLEAN DEFAULT TRUE,
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by          UUID
+);
+
+-- ============================================================================
+-- FRAUD ALERTS TABLE (Detected fraud incidents)
+-- ============================================================================
+CREATE TABLE fraud_alerts (
+    alert_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Who
+    user_type           VARCHAR(20) NOT NULL CHECK (user_type IN ('rider', 'driver')),
+    user_id             UUID NOT NULL,
+    
+    -- What
+    alert_type          fraud_alert_type NOT NULL,
+    rule_id             UUID REFERENCES fraud_rules(rule_id),
+    severity            fraud_severity NOT NULL,
+    
+    -- Context
+    trip_id             UUID,
+    evidence            JSONB NOT NULL,             -- All collected evidence
+    -- Example evidence: {
+    --   "location_jumps": [{"from": {...}, "to": {...}, "distance_km": 50, "time_seconds": 2}],
+    --   "device_info": {"is_rooted": true, "mock_location_enabled": true},
+    --   "pattern": "5 trips in last hour, all cancelled after 90% completion"
+    -- }
+    
+    -- Auto-detection info
+    detection_method    VARCHAR(50),                -- REALTIME, BATCH, MANUAL
+    confidence_score    DECIMAL(5,2),               -- 0-100
+    
+    -- Status & Resolution
+    status              fraud_status DEFAULT 'DETECTED',
+    auto_action_taken   VARCHAR(50),
+    
+    -- Investigation
+    investigated_by     UUID,
+    investigation_notes TEXT,
+    resolution          VARCHAR(50),                -- ACCOUNT_SUSPENDED, WARNING_ISSUED, NO_ACTION, etc.
+    resolved_at         TIMESTAMP WITH TIME ZONE,
+    
+    -- Timestamps
+    detected_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_fraud_alerts_user ON fraud_alerts(user_type, user_id);
+CREATE INDEX idx_fraud_alerts_status ON fraud_alerts(status) WHERE status NOT IN ('RESOLVED', 'FALSE_POSITIVE');
+CREATE INDEX idx_fraud_alerts_type ON fraud_alerts(alert_type, detected_at DESC);
+CREATE INDEX idx_fraud_alerts_trip ON fraud_alerts(trip_id) WHERE trip_id IS NOT NULL;
+
+-- ============================================================================
+-- DEVICE FINGERPRINTS TABLE (Track unique devices)
+-- ============================================================================
+CREATE TABLE device_fingerprints (
+    fingerprint_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Device Identification
+    device_id           VARCHAR(255) NOT NULL,      -- Unique device identifier
+    fingerprint_hash    VARCHAR(64) NOT NULL,       -- SHA256 of device attributes
+    
+    -- Device Attributes
+    platform            VARCHAR(20) NOT NULL,       -- ios, android
+    os_version          VARCHAR(50),
+    app_version         VARCHAR(20),
+    device_model        VARCHAR(100),
+    device_manufacturer VARCHAR(100),
+    screen_resolution   VARCHAR(20),
+    
+    -- Security Flags
+    is_rooted           BOOLEAN DEFAULT FALSE,
+    is_emulator         BOOLEAN DEFAULT FALSE,
+    mock_location       BOOLEAN DEFAULT FALSE,
+    vpn_detected        BOOLEAN DEFAULT FALSE,
+    
+    -- Associated Users
+    user_ids            UUID[] DEFAULT '{}',
+    user_types          VARCHAR[] DEFAULT '{}',
+    
+    -- Risk Assessment
+    risk_score          INT DEFAULT 0,              -- 0-100
+    is_blocked          BOOLEAN DEFAULT FALSE,
+    blocked_reason      VARCHAR(255),
+    blocked_at          TIMESTAMP WITH TIME ZONE,
+    
+    -- Timestamps
+    first_seen_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(device_id)
+);
+
+CREATE INDEX idx_device_fingerprints_hash ON device_fingerprints(fingerprint_hash);
+CREATE INDEX idx_device_fingerprints_blocked ON device_fingerprints(is_blocked) WHERE is_blocked = TRUE;
+CREATE INDEX idx_device_fingerprints_risk ON device_fingerprints(risk_score DESC);
+
+-- ============================================================================
+-- USER FRAUD SCORES TABLE (Running fraud risk for each user)
+-- ============================================================================
+CREATE TABLE user_fraud_scores (
+    id                  BIGSERIAL PRIMARY KEY,
+    user_type           VARCHAR(20) NOT NULL,
+    user_id             UUID NOT NULL,
+    
+    -- Risk Scores (0-100)
+    overall_score       INT DEFAULT 0,
+    gps_risk_score      INT DEFAULT 0,
+    payment_risk_score  INT DEFAULT 0,
+    behavior_risk_score INT DEFAULT 0,
+    
+    -- Counts
+    total_alerts        INT DEFAULT 0,
+    active_alerts       INT DEFAULT 0,
+    false_positives     INT DEFAULT 0,
+    
+    -- Actions
+    warnings_issued     INT DEFAULT 0,
+    suspensions         INT DEFAULT 0,
+    
+    -- Status
+    is_flagged          BOOLEAN DEFAULT FALSE,
+    is_under_review     BOOLEAN DEFAULT FALSE,
+    reviewer_id         UUID,
+    
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(user_type, user_id)
+);
+
+CREATE INDEX idx_user_fraud_scores_flagged ON user_fraud_scores(is_flagged) WHERE is_flagged = TRUE;
+CREATE INDEX idx_user_fraud_scores_score ON user_fraud_scores(overall_score DESC);
+
+-- ============================================================================
+-- GPS ANOMALIES TABLE (Track location inconsistencies)
+-- ============================================================================
+CREATE TABLE gps_anomalies (
+    anomaly_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
+    trip_id             UUID REFERENCES trips(trip_id),
+    
+    -- Anomaly Type
+    anomaly_type        VARCHAR(50) NOT NULL,
+    -- Types: TELEPORTATION, IMPOSSIBLE_SPEED, ACCURACY_FLIP, MOCK_DETECTED, STATIONARY_MOVEMENT
+    
+    -- Location Data
+    location_before     GEOGRAPHY(Point, 4326),
+    location_after      GEOGRAPHY(Point, 4326),
+    distance_meters     DECIMAL(10,2),
+    time_diff_seconds   INT,
+    calculated_speed    DECIMAL(10,2),              -- km/h
+    
+    -- Context
+    accuracy_before     DECIMAL(5,2),
+    accuracy_after      DECIMAL(5,2),
+    mock_location_flag  BOOLEAN,
+    
+    -- Severity
+    severity            fraud_severity,
+    is_suspicious       BOOLEAN DEFAULT TRUE,
+    
+    detected_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_gps_anomalies_driver ON gps_anomalies(driver_id, detected_at DESC);
+CREATE INDEX idx_gps_anomalies_trip ON gps_anomalies(trip_id) WHERE trip_id IS NOT NULL;
+
+-- ############################################################################
+-- #                         2. SAFETY FEATURES                               #
+-- ############################################################################
+
+-- ============================================================================
+-- EMERGENCY CONTACTS TABLE
+-- ============================================================================
+CREATE TABLE emergency_contacts (
+    contact_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Owner
+    user_type           VARCHAR(20) NOT NULL CHECK (user_type IN ('rider', 'driver')),
+    user_id             UUID NOT NULL,
+    
+    -- Contact Info
+    name                VARCHAR(100) NOT NULL,
+    phone               VARCHAR(20) NOT NULL,
+    email               VARCHAR(255),
+    relationship        VARCHAR(50),                -- FAMILY, FRIEND, SPOUSE, OTHER
+    
+    -- Settings
+    is_primary          BOOLEAN DEFAULT FALSE,
+    notify_on_trip      BOOLEAN DEFAULT FALSE,      -- Auto-share all trips
+    notify_on_sos       BOOLEAN DEFAULT TRUE,
+    
+    -- Status
+    is_verified         BOOLEAN DEFAULT FALSE,
+    verified_at         TIMESTAMP WITH TIME ZONE,
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_emergency_contacts_user ON emergency_contacts(user_type, user_id);
+
+-- ============================================================================
+-- SOS ALERTS TABLE
+-- ============================================================================
+CREATE TYPE sos_status AS ENUM ('ACTIVE', 'RESPONDING', 'RESOLVED', 'FALSE_ALARM', 'ESCALATED_TO_POLICE');
+
+CREATE TABLE sos_alerts (
+    sos_id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Who triggered
+    triggered_by_type   VARCHAR(20) NOT NULL CHECK (triggered_by_type IN ('rider', 'driver')),
+    triggered_by_id     UUID NOT NULL,
+    
+    -- Context
+    trip_id             UUID REFERENCES trips(trip_id),
+    location            GEOGRAPHY(Point, 4326) NOT NULL,
+    address             VARCHAR(500),
+    
+    -- Alert Details
+    alert_type          VARCHAR(50) DEFAULT 'MANUAL',
+    -- Types: MANUAL, AUTO_CRASH_DETECTED, AUTO_ROUTE_DEVIATION, AUTO_LONG_STOP, SILENT_ALERT
+    
+    status              sos_status DEFAULT 'ACTIVE',
+    
+    -- Actions Taken
+    emergency_contacted BOOLEAN DEFAULT FALSE,
+    police_notified     BOOLEAN DEFAULT FALSE,
+    police_case_number  VARCHAR(50),
+    contacts_notified   UUID[] DEFAULT '{}',        -- emergency_contact IDs notified
+    
+    -- Response
+    responded_by        UUID,                       -- Admin who responded
+    response_notes      TEXT,
+    resolution          VARCHAR(100),
+    
+    -- Audio/Evidence
+    audio_recording_url VARCHAR(500),
+    
+    -- Timestamps
+    triggered_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    responded_at        TIMESTAMP WITH TIME ZONE,
+    resolved_at         TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_sos_alerts_active ON sos_alerts(status) WHERE status IN ('ACTIVE', 'RESPONDING');
+CREATE INDEX idx_sos_alerts_trip ON sos_alerts(trip_id);
+CREATE INDEX idx_sos_alerts_triggered ON sos_alerts(triggered_at DESC);
+
+-- ============================================================================
+-- TRIP SAFETY CHECKS TABLE (Background monitoring during trip)
+-- ============================================================================
+CREATE TABLE trip_safety_checks (
+    check_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    trip_id             UUID NOT NULL REFERENCES trips(trip_id),
+    
+    -- Check Type
+    check_type          VARCHAR(50) NOT NULL,
+    -- Types: ROUTE_DEVIATION, UNEXPECTED_STOP, OVERSPEEDING, NO_MOVEMENT, DRIVER_OFFLINE, LONG_TRIP
+    
+    -- Details
+    severity            VARCHAR(20) DEFAULT 'LOW',
+    description         TEXT,
+    location            GEOGRAPHY(Point, 4326),
+    
+    -- Auto-action taken
+    auto_action         VARCHAR(50),                -- NOTIFY_RIDER, NOTIFY_SUPPORT, TRIGGER_SOS
+    action_taken        BOOLEAN DEFAULT FALSE,
+    
+    -- Resolution
+    is_acknowledged     BOOLEAN DEFAULT FALSE,
+    acknowledged_by     VARCHAR(20),                -- rider, driver, system
+    
+    detected_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_trip_safety_checks_trip ON trip_safety_checks(trip_id);
+
+-- ============================================================================
+-- TRIP SHARE TABLE (Live location sharing)
+-- ============================================================================
+CREATE TABLE trip_shares (
+    share_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    trip_id             UUID NOT NULL REFERENCES trips(trip_id),
+    rider_id            UUID NOT NULL REFERENCES riders(rider_id),
+    
+    -- Share Details
+    share_token         VARCHAR(64) UNIQUE NOT NULL,
+    share_url           VARCHAR(500),
+    
+    -- Recipients
+    shared_with_contacts UUID[] DEFAULT '{}',       -- emergency_contact IDs
+    shared_with_phones  VARCHAR[] DEFAULT '{}',     -- ad-hoc phone numbers
+    shared_with_emails  VARCHAR[] DEFAULT '{}',
+    
+    -- Status
+    is_active           BOOLEAN DEFAULT TRUE,
+    
+    -- Timestamps
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at          TIMESTAMP WITH TIME ZONE,
+    
+    -- Tracking
+    view_count          INT DEFAULT 0,
+    last_viewed_at      TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_trip_shares_trip ON trip_shares(trip_id);
+CREATE INDEX idx_trip_shares_token ON trip_shares(share_token);
+
+-- ============================================================================
+-- DRIVER BACKGROUND CHECKS TABLE
+-- ============================================================================
+CREATE TYPE background_check_status AS ENUM ('PENDING', 'IN_PROGRESS', 'PASSED', 'FAILED', 'EXPIRED', 'REQUIRES_REVIEW');
+
+CREATE TABLE driver_background_checks (
+    check_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
+    
+    -- Check Type
+    check_type          VARCHAR(50) NOT NULL,
+    -- Types: IDENTITY_VERIFICATION, CRIMINAL_RECORD, DRIVING_HISTORY, ADDRESS_VERIFICATION, REFERENCE_CHECK
+    
+    -- Provider
+    provider            VARCHAR(100),               -- Third-party verification service
+    provider_reference  VARCHAR(255),
+    
+    -- Results
+    status              background_check_status DEFAULT 'PENDING',
+    result_summary      TEXT,
+    result_details      JSONB,
+    risk_flags          VARCHAR[] DEFAULT '{}',
+    
+    -- Validity
+    valid_from          DATE,
+    valid_until         DATE,
+    
+    -- Review (if manual review needed)
+    reviewed_by         UUID,
+    review_notes        TEXT,
+    
+    -- Timestamps
+    initiated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    completed_at        TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_background_checks_driver ON driver_background_checks(driver_id);
+CREATE INDEX idx_background_checks_status ON driver_background_checks(status);
+CREATE INDEX idx_background_checks_expiry ON driver_background_checks(valid_until);
+
+-- ============================================================================
+-- SAFETY INCIDENTS TABLE (Reported safety issues)
+-- ============================================================================
+CREATE TABLE safety_incidents (
+    incident_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Reporter
+    reported_by_type    VARCHAR(20) NOT NULL,
+    reported_by_id      UUID NOT NULL,
+    
+    -- Reported Party
+    against_type        VARCHAR(20),
+    against_id          UUID,
+    
+    -- Context
+    trip_id             UUID REFERENCES trips(trip_id),
+    
+    -- Incident Details
+    incident_type       VARCHAR(50) NOT NULL,
+    -- Types: HARASSMENT, UNSAFE_DRIVING, PHYSICAL_ALTERCATION, INTOXICATED_DRIVER, 
+    --        VEHICLE_SAFETY, ROUTE_DEVIATION, INAPPROPRIATE_BEHAVIOR, THEFT, OTHER
+    
+    severity            VARCHAR(20) NOT NULL,       -- LOW, MEDIUM, HIGH, CRITICAL
+    description         TEXT NOT NULL,
+    
+    -- Evidence
+    evidence_urls       VARCHAR[] DEFAULT '{}',     -- Photos, screenshots
+    audio_recording_url VARCHAR(500),
+    
+    -- Location
+    incident_location   GEOGRAPHY(Point, 4326),
+    incident_address    VARCHAR(500),
+    incident_time       TIMESTAMP WITH TIME ZONE,
+    
+    -- Status
+    status              VARCHAR(30) DEFAULT 'REPORTED',
+    -- Statuses: REPORTED, UNDER_INVESTIGATION, ACTION_TAKEN, CLOSED, ESCALATED_TO_LAW
+    
+    -- Investigation
+    assigned_to         UUID REFERENCES admin_users(admin_id),
+    investigation_notes TEXT,
+    
+    -- Actions
+    action_taken        VARCHAR(100),
+    action_details      TEXT,
+    
+    -- Police
+    police_reported     BOOLEAN DEFAULT FALSE,
+    police_report_number VARCHAR(50),
+    
+    -- Timestamps
+    reported_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    resolved_at         TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_safety_incidents_reporter ON safety_incidents(reported_by_type, reported_by_id);
+CREATE INDEX idx_safety_incidents_against ON safety_incidents(against_type, against_id);
+CREATE INDEX idx_safety_incidents_status ON safety_incidents(status) WHERE status NOT IN ('CLOSED');
+CREATE INDEX idx_safety_incidents_trip ON safety_incidents(trip_id);
+
+-- ############################################################################
+-- #                         3. GEO-FENCING SYSTEM                            #
+-- ############################################################################
+
+-- ============================================================================
+-- GEO ZONES TABLE (Define special zones)
+-- ============================================================================
+CREATE TYPE geo_zone_type AS ENUM (
+    'AIRPORT',
+    'TRAIN_STATION',
+    'BUS_TERMINAL',
+    'MALL',
+    'EVENT_VENUE',
+    'HOSPITAL',
+    'RESTRICTED',          -- No pickups/drops allowed
+    'SURGE_ZONE',          -- Special surge rules
+    'PICKUP_ONLY',         -- Only pickups, no drops
+    'DROP_ONLY',           -- Only drops, no pickups
+    'QUEUE_ZONE',          -- Driver queue area (airports)
+    'GEOFENCE_ALERT'       -- Just trigger notification
+);
+
+CREATE TABLE geo_zones (
+    zone_id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    city_id             UUID NOT NULL REFERENCES cities(city_id),
+    
+    -- Zone Definition
+    name                VARCHAR(100) NOT NULL,
+    zone_type           geo_zone_type NOT NULL,
+    description         TEXT,
+    
+    -- Geography
+    boundary            GEOGRAPHY(Polygon, 4326) NOT NULL,
+    center_point        GEOGRAPHY(Point, 4326),
+    radius_meters       DECIMAL(10,2),              -- If circular zone
+    
+    -- Rules
+    rules               JSONB DEFAULT '{}',
+    -- Example rules:
+    -- {
+    --   "pickup_allowed": true,
+    --   "drop_allowed": true,
+    --   "surge_multiplier_override": 1.5,
+    --   "fixed_pickup_fee": 50.00,
+    --   "require_queue": true,
+    --   "max_wait_minutes": 30,
+    --   "operating_hours": {"start": "06:00", "end": "23:00"},
+    --   "vehicle_types_allowed": ["sedan", "premium"],
+    --   "notify_message": "You are entering airport zone"
+    -- }
+    
+    -- Fees
+    pickup_fee          DECIMAL(10,2) DEFAULT 0,
+    drop_fee            DECIMAL(10,2) DEFAULT 0,
+    
+    -- Queue settings (for airports)
+    has_queue           BOOLEAN DEFAULT FALSE,
+    queue_capacity      INT,
+    
+    -- Status
+    is_active           BOOLEAN DEFAULT TRUE,
+    
+    -- Timestamps
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_geo_zones_city ON geo_zones(city_id);
+CREATE INDEX idx_geo_zones_type ON geo_zones(zone_type);
+CREATE INDEX idx_geo_zones_boundary ON geo_zones USING GIST (boundary);
+
+-- ============================================================================
+-- AIRPORT QUEUES TABLE (Driver queue at airports)
+-- ============================================================================
+CREATE TABLE airport_queues (
+    queue_entry_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    zone_id             UUID NOT NULL REFERENCES geo_zones(zone_id),
+    driver_id           UUID NOT NULL REFERENCES drivers(driver_id),
+    
+    -- Queue Position
+    queue_position      INT NOT NULL,
+    vehicle_type        vehicle_type NOT NULL,
+    
+    -- Status
+    status              VARCHAR(20) DEFAULT 'WAITING',
+    -- Statuses: WAITING, NEXT_UP, ASSIGNED, LEFT_QUEUE, EXPIRED
+    
+    -- Location
+    entry_location      GEOGRAPHY(Point, 4326),
+    current_location    GEOGRAPHY(Point, 4326),
+    
+    -- Timestamps
+    entered_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    assigned_at         TIMESTAMP WITH TIME ZONE,
+    left_at             TIMESTAMP WITH TIME ZONE,
+    
+    -- Assigned Trip
+    trip_id             UUID REFERENCES trips(trip_id),
+    
+    -- Penalties (for leaving queue)
+    penalty_applied     BOOLEAN DEFAULT FALSE,
+    penalty_amount      DECIMAL(10,2)
+);
+
+CREATE INDEX idx_airport_queues_zone ON airport_queues(zone_id, queue_position) WHERE status = 'WAITING';
+CREATE INDEX idx_airport_queues_driver ON airport_queues(driver_id);
+
+-- ============================================================================
+-- ZONE ENTRY LOGS TABLE (Track when users enter/exit zones)
+-- ============================================================================
+CREATE TABLE zone_entry_logs (
+    log_id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    zone_id             UUID NOT NULL REFERENCES geo_zones(zone_id),
+    
+    -- User
+    user_type           VARCHAR(20) NOT NULL,
+    user_id             UUID NOT NULL,
+    
+    -- Event
+    event_type          VARCHAR(20) NOT NULL CHECK (event_type IN ('ENTER', 'EXIT')),
+    
+    -- Context
+    trip_id             UUID REFERENCES trips(trip_id),
+    location            GEOGRAPHY(Point, 4326) NOT NULL,
+    
+    -- Timestamp
+    logged_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_zone_entry_logs_zone ON zone_entry_logs(zone_id, logged_at DESC);
+CREATE INDEX idx_zone_entry_logs_user ON zone_entry_logs(user_type, user_id, logged_at DESC);
+
+-- ############################################################################
+-- #                         4. CHAT SYSTEM                                   #
+-- ############################################################################
+
+-- ============================================================================
+-- TRIP MESSAGES TABLE (In-trip chat between rider and driver)
+-- ============================================================================
+CREATE TABLE trip_messages (
+    message_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    trip_id             UUID NOT NULL REFERENCES trips(trip_id),
+    
+    -- Sender
+    sender_type         VARCHAR(20) NOT NULL CHECK (sender_type IN ('rider', 'driver', 'system')),
+    sender_id           UUID,
+    
+    -- Message Content
+    message_type        VARCHAR(20) DEFAULT 'TEXT',
+    -- Types: TEXT, IMAGE, AUDIO, LOCATION, QUICK_REPLY, SYSTEM
+    
+    content             TEXT,
+    media_url           VARCHAR(500),
+    quick_reply_id      UUID,
+    
+    -- For location sharing
+    location            GEOGRAPHY(Point, 4326),
+    
+    -- Status
+    status              VARCHAR(20) DEFAULT 'SENT',
+    -- Statuses: SENT, DELIVERED, READ, FAILED
+    
+    delivered_at        TIMESTAMP WITH TIME ZONE,
+    read_at             TIMESTAMP WITH TIME ZONE,
+    
+    -- Moderation
+    is_flagged          BOOLEAN DEFAULT FALSE,
+    flag_reason         VARCHAR(100),
+    
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_trip_messages_trip ON trip_messages(trip_id, created_at);
+CREATE INDEX idx_trip_messages_flagged ON trip_messages(is_flagged) WHERE is_flagged = TRUE;
+
+-- ============================================================================
+-- CHAT QUICK REPLIES TABLE (Pre-defined responses)
+-- ============================================================================
+CREATE TABLE chat_quick_replies (
+    reply_id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Reply Details
+    category            VARCHAR(50) NOT NULL,
+    -- Categories: PICKUP, ETA, LOCATION, DELAY, SAFETY, PAYMENT, GENERAL
+    
+    message             VARCHAR(255) NOT NULL,
+    
+    -- Localization
+    language            VARCHAR(10) DEFAULT 'en',
+    
+    -- Usage
+    user_type           VARCHAR(20),                -- rider, driver, or null for both
+    trip_status         trip_status,                -- When to show, null for all
+    
+    -- Ordering
+    display_order       INT DEFAULT 0,
+    
+    is_active           BOOLEAN DEFAULT TRUE,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_chat_quick_replies_category ON chat_quick_replies(category, user_type);
+
+-- ============================================================================
+-- CALL LOGS TABLE (Track calls between rider and driver)
+-- ============================================================================
+CREATE TABLE call_logs (
+    call_id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    trip_id             UUID NOT NULL REFERENCES trips(trip_id),
+    
+    -- Parties
+    caller_type         VARCHAR(20) NOT NULL,
+    caller_id           UUID NOT NULL,
+    receiver_type       VARCHAR(20) NOT NULL,
+    receiver_id         UUID NOT NULL,
+    
+    -- Call Details
+    call_type           VARCHAR(20) DEFAULT 'VOICE',
+    -- Types: VOICE, VOIP
+    
+    status              VARCHAR(20) NOT NULL,
+    -- Statuses: INITIATED, RINGING, ANSWERED, MISSED, DECLINED, FAILED
+    
+    duration_seconds    INT,
+    
+    -- Masking (privacy)
+    masked_number_used  VARCHAR(20),
+    
+    -- Timestamps
+    initiated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    answered_at         TIMESTAMP WITH TIME ZONE,
+    ended_at            TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_call_logs_trip ON call_logs(trip_id);
+
+-- ############################################################################
+-- #                    5. AUDIT & COMPLIANCE SYSTEM                          #
+-- ############################################################################
+
+-- ============================================================================
+-- USER SESSIONS TABLE (Track all login sessions)
+-- ============================================================================
+CREATE TABLE user_sessions (
+    session_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- User
+    user_type           VARCHAR(20) NOT NULL,
+    user_id             UUID NOT NULL,
+    
+    -- Session Details
+    token_hash          VARCHAR(64),                -- Hash of JWT/session token
+    device_fingerprint  UUID REFERENCES device_fingerprints(fingerprint_id),
+    
+    -- Device Info
+    device_id           VARCHAR(255),
+    platform            VARCHAR(20),
+    app_version         VARCHAR(20),
+    
+    -- Network Info
+    ip_address          INET,
+    ip_country          VARCHAR(2),
+    ip_city             VARCHAR(100),
+    
+    -- Status
+    is_active           BOOLEAN DEFAULT TRUE,
+    
+    -- Timestamps
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_active_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at          TIMESTAMP WITH TIME ZONE,
+    logged_out_at       TIMESTAMP WITH TIME ZONE,
+    logout_reason       VARCHAR(50)                 -- USER_ACTION, TOKEN_EXPIRED, FORCE_LOGOUT, SUSPICIOUS
+);
+
+CREATE INDEX idx_user_sessions_user ON user_sessions(user_type, user_id, is_active);
+CREATE INDEX idx_user_sessions_token ON user_sessions(token_hash);
+
+-- ============================================================================
+-- CONSENT LOGS TABLE (GDPR/Privacy consent tracking)
+-- ============================================================================
+CREATE TABLE consent_logs (
+    consent_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- User
+    user_type           VARCHAR(20) NOT NULL,
+    user_id             UUID NOT NULL,
+    
+    -- Consent Details
+    consent_type        VARCHAR(50) NOT NULL,
+    -- Types: TERMS_OF_SERVICE, PRIVACY_POLICY, MARKETING_EMAILS, MARKETING_SMS, 
+    --        LOCATION_TRACKING, DATA_SHARING, PUSH_NOTIFICATIONS, COOKIES
+    
+    version             VARCHAR(20),                -- Policy version consented to
+    
+    -- Action
+    action              VARCHAR(20) NOT NULL CHECK (action IN ('GRANTED', 'REVOKED', 'UPDATED')),
+    
+    -- Context
+    ip_address          INET,
+    device_info         JSONB,
+    
+    -- Timestamps
+    consented_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_consent_logs_user ON consent_logs(user_type, user_id, consent_type);
+
+-- ============================================================================
+-- DATA EXPORT REQUESTS TABLE (GDPR Right to Access)
+-- ============================================================================
+CREATE TABLE data_export_requests (
+    request_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Requester
+    user_type           VARCHAR(20) NOT NULL,
+    user_id             UUID NOT NULL,
+    
+    -- Request Details
+    data_types          VARCHAR[] NOT NULL,
+    -- Types: PROFILE, TRIPS, PAYMENTS, RATINGS, MESSAGES, LOCATIONS, ALL
+    
+    format              VARCHAR(20) DEFAULT 'JSON',
+    
+    -- Status
+    status              VARCHAR(20) DEFAULT 'PENDING',
+    -- Statuses: PENDING, PROCESSING, READY, DOWNLOADED, EXPIRED, FAILED
+    
+    -- Result
+    download_url        VARCHAR(500),
+    file_size_bytes     BIGINT,
+    expires_at          TIMESTAMP WITH TIME ZONE,
+    download_count      INT DEFAULT 0,
+    
+    -- Processing
+    processed_by        VARCHAR(100),               -- System or admin
+    error_message       TEXT,
+    
+    -- Timestamps
+    requested_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    completed_at        TIMESTAMP WITH TIME ZONE,
+    downloaded_at       TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_data_export_requests_user ON data_export_requests(user_type, user_id);
+CREATE INDEX idx_data_export_requests_status ON data_export_requests(status);
+
+-- ============================================================================
+-- DATA DELETION REQUESTS TABLE (GDPR Right to be Forgotten)
+-- ============================================================================
+CREATE TABLE data_deletion_requests (
+    request_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Requester
+    user_type           VARCHAR(20) NOT NULL,
+    user_id             UUID NOT NULL,
+    user_email          VARCHAR(255),
+    user_phone          VARCHAR(20),
+    
+    -- Request Details
+    reason              VARCHAR(100),
+    additional_notes    TEXT,
+    
+    -- Scope
+    deletion_scope      VARCHAR(20) DEFAULT 'FULL',
+    -- Scopes: FULL, PARTIAL (keep for legal), ANONYMIZE
+    
+    -- Legal Hold
+    legal_hold          BOOLEAN DEFAULT FALSE,
+    legal_hold_reason   VARCHAR(255),
+    legal_hold_until    DATE,
+    
+    -- Status
+    status              VARCHAR(20) DEFAULT 'PENDING',
+    -- Statuses: PENDING, APPROVED, PROCESSING, COMPLETED, REJECTED, ON_HOLD
+    
+    -- Approval
+    approved_by         UUID REFERENCES admin_users(admin_id),
+    approval_notes      TEXT,
+    
+    -- Execution
+    executed_by         VARCHAR(100),
+    data_deleted        JSONB,                      -- Record of what was deleted
+    
+    -- Timestamps
+    requested_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    approved_at         TIMESTAMP WITH TIME ZONE,
+    completed_at        TIMESTAMP WITH TIME ZONE,
+    
+    -- Legal requirement: Keep record of deletion for X years
+    record_expires_at   DATE
+);
+
+CREATE INDEX idx_data_deletion_requests_user ON data_deletion_requests(user_type, user_id);
+CREATE INDEX idx_data_deletion_requests_status ON data_deletion_requests(status);
+
+-- ============================================================================
+-- SENSITIVE DATA ACCESS LOG TABLE
+-- ============================================================================
+CREATE TABLE sensitive_data_access_logs (
+    log_id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Who Accessed
+    accessor_type       VARCHAR(20) NOT NULL,       -- admin, system, api
+    accessor_id         UUID,
+    
+    -- What Was Accessed
+    data_type           VARCHAR(50) NOT NULL,
+    -- Types: PAYMENT_DETAILS, FULL_PHONE, FULL_EMAIL, ID_DOCUMENTS, TRIP_ROUTE, LOCATION_HISTORY, MESSAGES
+    
+    target_user_type    VARCHAR(20),
+    target_user_id      UUID,
+    record_id           UUID,
+    
+    -- Access Details
+    access_reason       VARCHAR(100),               -- SUPPORT_TICKET, FRAUD_INVESTIGATION, DATA_EXPORT
+    reference_id        VARCHAR(255),               -- Ticket ID, etc.
+    
+    -- Context
+    ip_address          INET,
+    
+    accessed_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_sensitive_access_logs_accessor ON sensitive_data_access_logs(accessor_type, accessor_id);
+CREATE INDEX idx_sensitive_access_logs_target ON sensitive_data_access_logs(target_user_type, target_user_id);
+CREATE INDEX idx_sensitive_access_logs_time ON sensitive_data_access_logs(accessed_at DESC);
+
+-- ============================================================================
+-- COMPLIANCE REPORTS TABLE (Scheduled reports for regulators)
+-- ============================================================================
+CREATE TABLE compliance_reports (
+    report_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Report Details
+    report_type         VARCHAR(50) NOT NULL,
+    -- Types: SAFETY_SUMMARY, FRAUD_SUMMARY, DATA_REQUESTS, INCIDENT_REPORT, DRIVER_COMPLIANCE
+    
+    report_period_start DATE NOT NULL,
+    report_period_end   DATE NOT NULL,
+    
+    -- Content
+    report_data         JSONB NOT NULL,
+    report_file_url     VARCHAR(500),
+    
+    -- Status
+    status              VARCHAR(20) DEFAULT 'GENERATED',
+    
+    -- Submission (if required by regulator)
+    submitted_to        VARCHAR(100),
+    submitted_at        TIMESTAMP WITH TIME ZONE,
+    
+    -- Timestamps
+    generated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    generated_by        UUID
+);
+
+CREATE INDEX idx_compliance_reports_type ON compliance_reports(report_type, report_period_end DESC);
+
+-- ============================================================================
+-- POLICY VERSIONS TABLE (Track T&C / Privacy Policy versions)
+-- ============================================================================
+CREATE TABLE policy_versions (
+    policy_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Policy Details
+    policy_type         VARCHAR(50) NOT NULL,
+    -- Types: TERMS_OF_SERVICE, PRIVACY_POLICY, DRIVER_AGREEMENT, COOKIE_POLICY
+    
+    version             VARCHAR(20) NOT NULL,
+    
+    -- Content
+    content_url         VARCHAR(500) NOT NULL,
+    summary_changes     TEXT,
+    
+    -- Status
+    is_current          BOOLEAN DEFAULT FALSE,
+    
+    -- Timestamps
+    effective_from      TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by          UUID,
+    
+    UNIQUE(policy_type, version)
+);
+
+CREATE INDEX idx_policy_versions_current ON policy_versions(policy_type, is_current) WHERE is_current = TRUE;
+
+-- ============================================================================
 -- FUNCTIONS & TRIGGERS
 -- ============================================================================
 

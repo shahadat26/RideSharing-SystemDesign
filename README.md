@@ -16,7 +16,12 @@
 6. [System Architecture](#system-architecture)
 7. [Core Workflows](#core-workflows)
 8. [💰 Complete Payment System](#-complete-payment-system-like-uberola)
-9. [Non-Functional Requirements](#non-functional-requirements)
+9. [🛡️ Fraud Detection System](#️-fraud-detection-system)
+10. [🆘 Safety Features](#-safety-features)
+11. [📍 Geo-Fencing System](#-geo-fencing-system)
+12. [💬 In-Trip Chat System](#-in-trip-chat-system)
+13. [📋 Audit & Compliance (GDPR)](#-audit--compliance-gdpr)
+14. [Non-Functional Requirements](#non-functional-requirements)
 
 ---
 
@@ -2019,6 +2024,1209 @@ CREATE TABLE driver_payouts (
 │  ✓ Surge earnings (commission applied to surge fare too)                        │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🛡️ Fraud Detection System
+
+### Overview
+Real-time fraud detection system monitoring driver GPS, rider behavior, payment patterns, and device fingerprints to prevent abuse and protect both riders and drivers.
+
+### Fraud Detection Types
+
+| Type | Detection Method | Auto-Action |
+|------|------------------|-------------|
+| **GPS Spoofing** | Impossible speed, location jumps, mock location enabled | Block trip, flag driver |
+| **Device Tampering** | Rooted/jailbroken device, emulator detection | Suspend account |
+| **Multiple Accounts** | Same device fingerprint, duplicate phone/email | Block registration |
+| **Promo Abuse** | Excessive promo usage, referral fraud patterns | Block promo, warning |
+| **Fake Trips** | Short trips for incentives, circular routes | No payout, investigation |
+| **Payment Fraud** | Stolen cards, chargeback history | Block payment method |
+| **Rating Manipulation** | Driver-rider collusion, fake 5-star exchanges | Rating removed |
+| **Collusion** | Same pickup/drop, repeated rider-driver pairs | Investigation |
+
+### GPS Spoofing Detection
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         GPS FRAUD DETECTION FLOW                                 │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   Driver Location Update                                                         │
+│          │                                                                       │
+│          ▼                                                                       │
+│   ┌──────────────────┐                                                          │
+│   │ Receive Location │──────────────────────────────────────────────────────┐   │
+│   │ Lat, Lng, Speed, │                                                      │   │
+│   │ Accuracy, Time   │                                                      │   │
+│   └────────┬─────────┘                                                      │   │
+│            │                                                                │   │
+│            ▼                                                                │   │
+│   ┌────────────────────────────────────────────────────────────────────────┐│   │
+│   │                    FRAUD DETECTION CHECKS                              ││   │
+│   ├────────────────────────────────────────────────────────────────────────┤│   │
+│   │                                                                        ││   │
+│   │  CHECK 1: Impossible Speed                                             ││   │
+│   │  ────────────────────────────                                          ││   │
+│   │  Calculate speed = distance / time between updates                     ││   │
+│   │  Flag if speed > 200 km/h (impossible for road travel)                 ││   │
+│   │                                                                        ││   │
+│   │  CHECK 2: Location Teleportation                                       ││   │
+│   │  ────────────────────────────────                                      ││   │
+│   │  Distance jumped > 5km in < 30 seconds = TELEPORTATION                 ││   │
+│   │                                                                        ││   │
+│   │  CHECK 3: Accuracy Flip                                                ││   │
+│   │  ──────────────────────────                                            ││   │
+│   │  Accuracy suddenly changes from 5m to 500m = MOCK LOCATION             ││   │
+│   │                                                                        ││   │
+│   │  CHECK 4: Mock Location Flag                                           ││   │
+│   │  ─────────────────────────────                                         ││   │
+│   │  Android: Settings.Secure.ALLOW_MOCK_LOCATION                          ││   │
+│   │  iOS: Check for location spoofing apps                                 ││   │
+│   │                                                                        ││   │
+│   │  CHECK 5: Stationary Movement                                          ││   │
+│   │  ───────────────────────────                                           ││   │
+│   │  Trip shows movement but driver hasn't moved (GPS stationary)          ││   │
+│   │                                                                        ││   │
+│   └────────────────────────────────────────────────────────────────────────┘│   │
+│            │                                                                │   │
+│            ▼                                                                │   │
+│   ┌────────────────────┐   Yes   ┌────────────────────────────────────────┐│   │
+│   │  Any Check Failed? │─────────│ CREATE FRAUD ALERT                     ││   │
+│   └────────┬───────────┘         │ • Log evidence                         ││   │
+│            │ No                  │ • Calculate confidence score           ││   │
+│            ▼                     │ • Trigger auto-action                  ││   │
+│   ┌────────────────────┐         │ • Notify fraud team                    ││   │
+│   │ Update Location    │         └────────────────────────────────────────┘│   │
+│   │ Normally           │                                                    │   │
+│   └────────────────────┘                                                    │   │
+│                                                                              │   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Device Fingerprinting
+
+```
+DEVICE FINGERPRINT COMPONENTS:
+─────────────────────────────────
+Device ID (ANDROID_ID / IDFV)
++ Device Model
++ OS Version
++ Screen Resolution
++ Installed Fonts
++ Battery Info
++ Sensor Data
+= UNIQUE FINGERPRINT HASH (SHA-256)
+
+RISK SCORING:
+─────────────────────────
+Base Score: 0
++ Rooted/Jailbroken:  +40
++ Emulator:           +50
++ Mock Location:      +30
++ VPN Detected:       +10
++ Multiple Accounts:  +20 per account
+= Total Risk Score (0-100)
+
+THRESHOLDS:
+─────────────────────────
+0-20:   LOW RISK     → Normal operation
+21-50:  MEDIUM RISK  → Enhanced monitoring
+51-80:  HIGH RISK    → Manual review required
+81-100: CRITICAL     → Auto-suspend, investigation
+```
+
+### Fraud Rules Configuration
+
+| Rule | Threshold | Period | Severity | Auto-Action |
+|------|-----------|--------|----------|-------------|
+| GPS Teleportation | 3 jumps | 1 hour | HIGH | Block current trip |
+| Excessive Speed | 5 occurrences | 1 hour | MEDIUM | Warning |
+| Promo Code Abuse | 10 codes | 30 days | HIGH | Block promos |
+| Cancellation Pattern | 80% cancel after match | 1 week | MEDIUM | Warning |
+| Short Trip Farming | 20 trips < 1km | 1 day | CRITICAL | Suspend + Investigation |
+| Device Fingerprint Match | 2 accounts | - | HIGH | Second account blocked |
+
+### Fraud Alert APIs
+
+```
+POST   /admin/fraud/rules                      # Create fraud detection rule
+GET    /admin/fraud/rules                      # List all rules
+PUT    /admin/fraud/rules/{rule_id}            # Update rule
+DELETE /admin/fraud/rules/{rule_id}            # Delete rule (soft)
+
+GET    /admin/fraud/alerts                     # List fraud alerts (filterable)
+GET    /admin/fraud/alerts/{alert_id}          # Get alert details + evidence
+PUT    /admin/fraud/alerts/{alert_id}/status   # Update status (investigating/resolved)
+POST   /admin/fraud/alerts/{alert_id}/action   # Take action (warn, suspend, clear)
+
+GET    /admin/fraud/users/{user_type}/{user_id}/score    # Get user fraud score
+GET    /admin/fraud/users/{user_type}/{user_id}/history  # User fraud history
+
+GET    /admin/fraud/devices                    # List flagged devices
+POST   /admin/fraud/devices/{device_id}/block  # Block device
+DELETE /admin/fraud/devices/{device_id}/block  # Unblock device
+
+GET    /admin/fraud/analytics                  # Fraud statistics dashboard
+GET    /admin/fraud/reports                    # Generate fraud reports
+```
+
+### Fraud Score Calculation
+
+```
+USER FRAUD SCORE CALCULATION:
+────────────────────────────────────
+
+                ┌─────────────────────┐
+                │   OVERALL SCORE     │
+                │   (0-100)           │
+                └─────────┬───────────┘
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+    ┌──────────┐    ┌──────────┐    ┌──────────┐
+    │   GPS    │    │ Payment  │    │ Behavior │
+    │  Risk    │    │  Risk    │    │  Risk    │
+    │  (40%)   │    │  (30%)   │    │  (30%)   │
+    └──────────┘    └──────────┘    └──────────┘
+          │               │               │
+          ▼               ▼               ▼
+    - Teleportation  - Chargebacks   - Cancellations
+    - Mock location  - Failed pays   - Rating patterns
+    - Impossible     - Card fraud    - Collusion
+      speeds         - Promo abuse   - Trip patterns
+
+
+SCORE IMPACTS:
+────────────────────────────────────
+Confirmed Fraud Alert:       +15-30 points
+False Positive (cleared):    -5 points
+Clean rides (per 100):       -2 points
+Account age (per year):      -3 points (trust)
+```
+
+---
+
+## 🆘 Safety Features
+
+### Overview
+Comprehensive safety system protecting riders and drivers with SOS alerts, trip sharing, emergency contacts, background checks, and real-time safety monitoring.
+
+### Safety Components
+
+| Component | Description | Trigger |
+|-----------|-------------|---------|
+| **SOS Button** | Instant emergency alert | User presses SOS (hold 3 sec) |
+| **Trip Sharing** | Share live location with contacts | Before/during trip |
+| **Emergency Contacts** | Pre-saved trusted contacts | SOS or manual share |
+| **Safety Checks** | Auto-detect anomalies | Route deviation, long stop |
+| **Background Checks** | Driver verification | Before approval |
+| **Audio Recording** | Trip audio for disputes | On-demand or SOS |
+
+### SOS Alert Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              SOS ALERT SYSTEM                                    │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   User Presses SOS                                                               │
+│   (Hold 3 seconds)                                                               │
+│          │                                                                       │
+│          ▼                                                                       │
+│   ┌──────────────────┐        ┌────────────────────────────────────────────────┐│
+│   │ SOS TRIGGERED    │        │ IMMEDIATELY COLLECTED:                         ││
+│   │                  │───────▶│ • Current GPS location                         ││
+│   │ Alert Type:      │        │ • Trip details (if active)                     ││
+│   │ • MANUAL         │        │ • Driver/Rider info                            ││
+│   │ • CRASH_DETECTED │        │ • Vehicle details                              ││
+│   │ • ROUTE_DEVIATION│        │ • Time & date                                  ││
+│   │ • SILENT         │        └────────────────────────────────────────────────┘│
+│   └────────┬─────────┘                                                          │
+│            │                                                                     │
+│            ▼                                                                     │
+│   ┌────────────────────────────────────────────────────────────────────────────┐│
+│   │                         PARALLEL ACTIONS                                   ││
+│   ├────────────────────────────────────────────────────────────────────────────┤│
+│   │                                                                            ││
+│   │   ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐          ││
+│   │   │ NOTIFY SUPPORT  │  │ NOTIFY CONTACTS │  │ START AUDIO      │          ││
+│   │   │ TEAM            │  │                 │  │ RECORDING        │          ││
+│   │   ├─────────────────┤  ├─────────────────┤  ├──────────────────┤          ││
+│   │   │ • Dashboard     │  │ • SMS with link │  │ • Auto-start     │          ││
+│   │   │   alert         │  │ • Push notify   │  │ • Cloud upload   │          ││
+│   │   │ • Priority      │  │ • Live location │  │ • Evidence       │          ││
+│   │   │   queue         │  │   sharing       │  │   preservation   │          ││
+│   │   └─────────────────┘  └─────────────────┘  └──────────────────┘          ││
+│   │                                                                            ││
+│   └────────────────────────────────────────────────────────────────────────────┘│
+│            │                                                                     │
+│            ▼                                                                     │
+│   ┌────────────────────────────────────────────────────────────────────────────┐│
+│   │                      SUPPORT TEAM ACTIONS                                  ││
+│   ├────────────────────────────────────────────────────────────────────────────┤│
+│   │                                                                            ││
+│   │   1. Contact user immediately (call)                                       ││
+│   │   2. Assess situation severity                                             ││
+│   │   3. Contact emergency services if needed (Police: 100, Ambulance: 102)    ││
+│   │   4. Track real-time location                                              ││
+│   │   5. Document incident                                                     ││
+│   │   6. Follow up after resolution                                            ││
+│   │                                                                            ││
+│   └────────────────────────────────────────────────────────────────────────────┘│
+│            │                                                                     │
+│            ▼                                                                     │
+│   ┌─────────────────┐                                                           │
+│   │ RESOLUTION      │                                                           │
+│   ├─────────────────┤                                                           │
+│   │ • Mark resolved │                                                           │
+│   │ • Update notes  │                                                           │
+│   │ • Follow-up     │                                                           │
+│   │ • Report filed  │                                                           │
+│   └─────────────────┘                                                           │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Trip Sharing
+
+```
+LIVE TRIP SHARING:
+──────────────────────────────────────────────────────────────────────
+
+┌──────────────────┐     ┌──────────────────────────────────────────┐
+│  RIDER STARTS    │     │         SHARE LINK CONTENT               │
+│  TRIP SHARING    │     ├──────────────────────────────────────────┤
+├──────────────────┤     │                                          │
+│                  │     │  🚗 [Rider Name]'s Trip                  │
+│ Share with:      │────▶│                                          │
+│ • Saved contacts │     │  From: 123 Main Street                   │
+│ • Enter phone    │     │  To: Airport Terminal 1                  │
+│ • Enter email    │     │                                          │
+│                  │     │  Driver: Rajesh K. ⭐ 4.8                 │
+│                  │     │  Vehicle: White Swift DL-5C-1234         │
+│                  │     │                                          │
+└──────────────────┘     │  [LIVE MAP TRACKING]                     │
+                         │                                          │
+                         │  ETA: 25 mins                            │
+                         │  Current Speed: 45 km/h                  │
+                         │                                          │
+                         │  [Call Rider] [Call Driver] [Emergency]  │
+                         │                                          │
+                         └──────────────────────────────────────────┘
+
+LINK DETAILS:
+─────────────────────────────────────
+• Unique share token (64 chars)
+• Expires 24 hours after trip end
+• View count tracked
+• No login required to view
+• Emergency button for viewer
+```
+
+### Auto Safety Checks
+
+| Check Type | Trigger | Threshold | Action |
+|------------|---------|-----------|--------|
+| **Route Deviation** | Driver off route | >500m for >3 min | Notify rider |
+| **Unexpected Stop** | Vehicle stopped | >5 min unexpected | Notify rider |
+| **Overspeeding** | Speed limit breach | >80 km/h in city | Log + alert if extreme |
+| **No Movement** | GPS not updating | >10 min during trip | Contact driver |
+| **Long Trip** | Trip duration | >3x ETA | Auto-check popup |
+| **Driver Offline** | Connection lost | >2 min mid-trip | Alert support |
+
+### Driver Background Checks
+
+```
+DRIVER VERIFICATION PROCESS:
+────────────────────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    VERIFICATION STAGES                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   STAGE 1: IDENTITY VERIFICATION                                     │
+│   ─────────────────────────────────                                 │
+│   • Aadhaar/PAN verification via DigiLocker                         │
+│   • Face match with ID photo                                         │
+│   • Liveness check (blink, smile)                                    │
+│   • Address proof verification                                       │
+│                                                                      │
+│   STAGE 2: CRIMINAL BACKGROUND CHECK                                 │
+│   ────────────────────────────────────                              │
+│   • Police verification certificate                                  │
+│   • Court records check (civil + criminal)                           │
+│   • Sexual offender registry check                                   │
+│   • Terrorist watchlist screening                                    │
+│                                                                      │
+│   STAGE 3: DRIVING HISTORY                                           │
+│   ─────────────────────────────                                     │
+│   • License validity check with RTO                                  │
+│   • Traffic violation history                                        │
+│   • Accident history check                                           │
+│   • DUI/DWI records                                                  │
+│                                                                      │
+│   STAGE 4: VEHICLE VERIFICATION                                      │
+│   ───────────────────────────────                                   │
+│   • RC book verification                                             │
+│   • Insurance validity (min 1 year)                                  │
+│   • Fitness certificate                                              │
+│   • Commercial permit (if required)                                  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+CHECK VALIDITY:
+─────────────────────────────
+Identity:          Lifetime (re-check annually)
+Criminal Record:   1 year validity
+Driving History:   1 year validity
+Vehicle Docs:      Until expiry date
+```
+
+### Safety APIs
+
+```
+# Emergency Contacts
+POST   /rider/emergency-contacts               # Add emergency contact
+GET    /rider/emergency-contacts               # List contacts
+PUT    /rider/emergency-contacts/{id}          # Update contact
+DELETE /rider/emergency-contacts/{id}          # Remove contact
+POST   /rider/emergency-contacts/{id}/verify   # Verify contact phone
+
+# Same APIs for drivers
+POST   /driver/emergency-contacts
+GET    /driver/emergency-contacts
+
+# SOS
+POST   /rider/sos                              # Trigger SOS alert
+POST   /driver/sos                             # Trigger SOS alert
+GET    /rider/sos/{sos_id}/status             # Check SOS status
+PUT    /rider/sos/{sos_id}/cancel             # Cancel (if false alarm)
+
+# Trip Sharing
+POST   /rider/trips/{trip_id}/share           # Create share link
+GET    /rider/trips/{trip_id}/share           # Get share details
+DELETE /rider/trips/{trip_id}/share           # Stop sharing
+GET    /public/trip/{share_token}             # View shared trip (no auth)
+
+# Safety Incidents
+POST   /rider/safety/report                    # Report safety issue
+POST   /driver/safety/report                   # Report safety issue
+GET    /rider/safety/incidents                 # My reported incidents
+GET    /admin/safety/incidents                 # All incidents (admin)
+PUT    /admin/safety/incidents/{id}            # Update incident status
+
+# Background Checks (Admin)
+POST   /admin/drivers/{id}/background-check    # Initiate check
+GET    /admin/drivers/{id}/background-checks   # View check history
+PUT    /admin/background-checks/{id}           # Manual review update
+```
+
+---
+
+## 📍 Geo-Fencing System
+
+### Overview
+Location-based rules engine that manages special zones like airports, malls, restricted areas with custom pricing, pickup rules, and driver queues.
+
+### Zone Types
+
+| Zone Type | Purpose | Special Rules |
+|-----------|---------|---------------|
+| **Airport** | Airport terminal zones | Queue system, fixed pickup fee, designated spots |
+| **Train Station** | Railway stations | Queue optional, pickup zones |
+| **Mall** | Shopping centers | Pickup zones, waiting areas |
+| **Event Venue** | Stadiums, concerts | Surge rules, restricted times |
+| **Hospital** | Emergency zones | Priority access, no surge |
+| **Restricted** | No-go areas | No pickup/drop allowed |
+| **Pickup Only** | One-way zones | Drop not allowed |
+| **Drop Only** | Arrival zones | Pickup not allowed |
+
+### Airport Queue System
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          AIRPORT QUEUE SYSTEM                                    │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│                           AIRPORT ZONE                                           │
+│   ┌───────────────────────────────────────────────────────────────────────┐     │
+│   │                                                                        │     │
+│   │    ┌───────────┐    ┌────────────────────────────────────────────┐    │     │
+│   │    │ TERMINAL  │    │        DRIVER QUEUE AREA                   │    │     │
+│   │    │   1 & 2   │    ├────────────────────────────────────────────┤    │     │
+│   │    │           │    │                                            │    │     │
+│   │    │   [P]     │    │   Queue Position:                          │    │     │
+│   │    │  Pickup   │    │   1. 🚗 Driver A (Sedan) - 45 min wait     │    │     │
+│   │    │  Point    │    │   2. 🚗 Driver B (SUV) - 42 min wait       │    │     │
+│   │    │           │    │   3. 🚗 Driver C (Sedan) - 38 min wait     │    │     │
+│   │    │           │    │   4. 🚗 Driver D (Premium) - 35 min wait   │    │     │
+│   │    │           │    │   5. 🚗 Driver E (Sedan) - 30 min wait     │    │     │
+│   │    │           │    │   ...                                      │    │     │
+│   │    │           │    │   25. 🚗 Driver Y (Sedan) - Just joined    │    │     │
+│   │    │           │    │                                            │    │     │
+│   │    └───────────┘    │   [Capacity: 50] [Current: 25]            │    │     │
+│   │                     └────────────────────────────────────────────┘    │     │
+│   │                                                                        │     │
+│   └───────────────────────────────────────────────────────────────────────┘     │
+│                                                                                  │
+│   HOW IT WORKS:                                                                  │
+│   ─────────────────────────────────────────────────────────────────────         │
+│                                                                                  │
+│   1. DRIVER ENTERS AIRPORT ZONE                                                  │
+│      └── Auto-detected via GPS                                                   │
+│      └── Prompted: "Join airport queue?"                                         │
+│                                                                                  │
+│   2. DRIVER JOINS QUEUE                                                          │
+│      └── Assigned position based on vehicle type                                 │
+│      └── Must stay within queue zone                                             │
+│      └── Wait time tracked                                                       │
+│                                                                                  │
+│   3. RIDER REQUESTS PICKUP FROM AIRPORT                                          │
+│      └── System assigns FIRST driver in queue (of matching vehicle type)         │
+│      └── Driver has 60 seconds to accept                                         │
+│      └── If declined/missed, goes to next in queue                               │
+│      └── Declining driver moves to back of queue                                 │
+│                                                                                  │
+│   4. ASSIGNMENT COMPLETE                                                         │
+│      └── Driver navigates to pickup point                                        │
+│      └── Airport pickup fee (₹100) added to fare                                │
+│      └── Must depart within 10 min of pickup                                     │
+│                                                                                  │
+│   QUEUE RULES:                                                                   │
+│   ─────────────────────────────────────────────────────────────────────         │
+│   • Leaving queue zone = Removed from queue                                      │
+│   • Offline while in queue = Removed + penalty                                   │
+│   • Declining 3 trips = 30 min re-queue cooldown                                 │
+│   • Max wait time: 4 hours (then removed)                                        │
+│   • Separate queues per vehicle type                                             │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Zone Rules Configuration
+
+```json
+{
+  "zone": "Airport Terminal 1",
+  "zone_type": "AIRPORT",
+  "rules": {
+    "pickup_allowed": true,
+    "drop_allowed": true,
+    "pickup_fee": 100.00,
+    "drop_fee": 0.00,
+    "surge_override": null,
+    "require_queue": true,
+    "queue_capacity": 50,
+    "max_queue_wait_hours": 4,
+    "vehicle_types_allowed": ["sedan", "suv", "premium"],
+    "operating_hours": {
+      "start": "00:00",
+      "end": "23:59"
+    },
+    "pickup_instructions": "Proceed to Gate 5, Ground Floor",
+    "driver_notification": "You're entering airport zone. Follow signs to waiting area."
+  }
+}
+```
+
+### Restricted Zone Handling
+
+```
+RESTRICTED ZONE BEHAVIOR:
+─────────────────────────────────────────────────────────────────
+
+     User tries to set pickup          User tries to set drop
+     in restricted zone                in restricted zone
+              │                                 │
+              ▼                                 ▼
+     ┌─────────────────┐               ┌─────────────────┐
+     │  CHECK ZONE     │               │  CHECK ZONE     │
+     │  RULES          │               │  RULES          │
+     └────────┬────────┘               └────────┬────────┘
+              │                                 │
+              ▼                                 ▼
+     ┌─────────────────┐               ┌─────────────────┐
+     │  ZONE TYPE:     │               │  ZONE TYPE:     │
+     │  RESTRICTED     │               │  DROP_ONLY      │
+     │  or PICKUP_ONLY │               │                 │
+     └────────┬────────┘               └────────┬────────┘
+              │                                 │
+              ▼                                 ▼
+     ┌─────────────────────────────────────────────────────┐
+     │  SHOW ERROR MESSAGE:                                │
+     │  "Pickup/Drop not available in this area.           │
+     │   Please select a location outside the marked zone"  │
+     │                                                     │
+     │  [Show zone boundary on map with red shading]       │
+     │  [Suggest nearest allowed pickup/drop point]        │
+     └─────────────────────────────────────────────────────┘
+
+EXAMPLES OF RESTRICTED ZONES:
+─────────────────────────────
+• Government buildings
+• Military areas
+• Private properties
+• Construction zones
+• Flooded/unsafe roads
+• Event-specific blocks (protesth
+```
+
+### Geo-Fencing APIs
+
+```
+# Zone Management (Admin)
+POST   /admin/geo-zones                        # Create zone
+GET    /admin/geo-zones                        # List all zones
+GET    /admin/geo-zones/{zone_id}              # Get zone details
+PUT    /admin/geo-zones/{zone_id}              # Update zone
+DELETE /admin/geo-zones/{zone_id}              # Delete zone (soft)
+POST   /admin/geo-zones/{zone_id}/activate     # Activate zone
+POST   /admin/geo-zones/{zone_id}/deactivate   # Deactivate zone
+
+# Zone Query (Public/Apps)
+POST   /geo/check-location                     # Check if point is in any zone
+GET    /geo/zones/nearby                       # Get zones near location
+GET    /geo/zones/{zone_id}/rules              # Get zone rules
+
+# Airport Queues
+GET    /driver/airport-queue/status            # Current queue status
+POST   /driver/airport-queue/join              # Join queue
+DELETE /driver/airport-queue/leave             # Leave queue
+GET    /driver/airport-queue/position          # My position in queue
+
+# Admin Queue Management
+GET    /admin/airport-queues                   # List all queues
+GET    /admin/airport-queues/{zone_id}         # Queue details
+POST   /admin/airport-queues/{zone_id}/clear   # Clear queue
+PUT    /admin/airport-queues/entry/{id}        # Update entry
+
+# Zone Analytics
+GET    /admin/geo-zones/{zone_id}/analytics    # Zone usage stats
+GET    /admin/geo-zones/heatmap                # Activity heatmap
+```
+
+### Zone Entry/Exit Events
+
+```
+ZONE DETECTION FLOW:
+─────────────────────────────────────────────────────────
+
+  Driver/Rider App                    Backend
+       │                                │
+       │   Location Update              │
+       │   (lat, lng)                   │
+       ├───────────────────────────────>│
+       │                                │
+       │                     ┌──────────┴──────────┐
+       │                     │ Check against all   │
+       │                     │ active geo_zones    │
+       │                     │ using PostGIS       │
+       │                     │ ST_Contains()       │
+       │                     └──────────┬──────────┘
+       │                                │
+       │                     ┌──────────┴──────────┐
+       │                     │ Zone state changed? │
+       │                     │ (entered/exited)    │
+       │                     └──────────┬──────────┘
+       │                                │
+       │         Yes                    │ No
+       │    ┌────┴────┐                 │
+       │    ▼         ▼                 │
+       │  ENTER     EXIT                │
+       │    │         │                 │
+       │    ▼         ▼                 │
+       │  Log entry  Log exit           │
+       │  event      event              │
+       │    │         │                 │
+       │    ▼         ▼                 │
+       │  Apply      Remove             │
+       │  zone       zone               │
+       │  rules      rules              │
+       │                                │
+       │<───────────────────────────────┤
+       │   Zone notification            │
+       │   (if configured)              │
+       │                                │
+```
+
+---
+
+## 💬 In-Trip Chat System
+
+### Overview
+Real-time messaging between riders and drivers during trips, supporting text, images, quick replies, and location sharing, with content moderation.
+
+### Chat Features
+
+| Feature | Description | Use Case |
+|---------|-------------|----------|
+| **Text Messages** | Free-form text | Specific instructions |
+| **Quick Replies** | Pre-defined responses | Common messages |
+| **Image Sharing** | Send photos | Building photos, landmarks |
+| **Location Pin** | Share exact location | "I'm at this pin" |
+| **Voice Messages** | Audio notes | When typing is difficult |
+| **Read Receipts** | Message status | Delivered, Read |
+
+### Quick Replies
+
+```
+RIDER QUICK REPLIES:
+─────────────────────────────────
+PICKUP PHASE:
+• "I'm waiting at the pickup point"
+• "I'm wearing a [color] shirt"
+• "Look for [landmark]"
+• "I'll be there in 5 minutes"
+• "Please wait, I'm coming"
+
+DURING TRIP:
+• "Please turn on AC"
+• "Can you drive slower?"
+• "Change the route please"
+• "Stop at the next safe spot"
+
+PAYMENT:
+• "I'll pay in cash"
+• "I need a receipt"
+
+
+DRIVER QUICK REPLIES:
+─────────────────────────────────
+ARRIVAL:
+• "I have arrived"
+• "I'm in a [color] car"
+• "I'm parked at [location]"
+• "Please come outside"
+• "Unable to find you, please call"
+
+DURING TRIP:
+• "Heavy traffic ahead"
+• "Taking alternate route"
+• "ETA is approximately XX mins"
+
+WAITING:
+• "I'm waiting for you"
+• "Please hurry, parking is limited"
+```
+
+### Chat Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           CHAT SYSTEM ARCHITECTURE                               │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│    ┌──────────────┐        ┌──────────────┐        ┌──────────────┐            │
+│    │  Rider App   │◄──────►│  WebSocket   │◄──────►│  Driver App  │            │
+│    │              │        │  Gateway     │        │              │            │
+│    └──────────────┘        └──────┬───────┘        └──────────────┘            │
+│                                   │                                             │
+│                                   ▼                                             │
+│                          ┌─────────────────┐                                    │
+│                          │  Chat Service   │                                    │
+│                          ├─────────────────┤                                    │
+│                          │ • Message Store │                                    │
+│                          │ • Delivery      │                                    │
+│                          │ • Moderation    │                                    │
+│                          │ • Quick Replies │                                    │
+│                          └────────┬────────┘                                    │
+│                                   │                                             │
+│             ┌─────────────────────┼─────────────────────┐                       │
+│             ▼                     ▼                     ▼                       │
+│    ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐             │
+│    │   PostgreSQL    │   │     Redis       │   │   S3/Storage    │             │
+│    │   (Messages)    │   │   (Pub/Sub)     │   │   (Media)       │             │
+│    └─────────────────┘   └─────────────────┘   └─────────────────┘             │
+│                                                                                  │
+│   MESSAGE FLOW:                                                                  │
+│   ─────────────────────────────────────────────────────────────────             │
+│                                                                                  │
+│   1. Rider sends message via WebSocket                                          │
+│   2. Chat Service validates & stores message                                     │
+│   3. Message published to Redis channel (trip:{trip_id}:chat)                   │
+│   4. Driver's WebSocket connection subscribed to same channel                   │
+│   5. Driver receives message in real-time                                        │
+│   6. Delivery status sent back to Rider                                          │
+│   7. When Driver opens message, Read receipt sent                                │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Message Moderation
+
+```
+CONTENT MODERATION FLOW:
+─────────────────────────────────────────────────────────
+
+  Message Sent
+       │
+       ▼
+  ┌─────────────────────────────────────────────────┐
+  │             AUTOMATED CHECKS                     │
+  ├─────────────────────────────────────────────────┤
+  │  • Profanity filter (word list + ML model)      │
+  │  • Phone number regex (privacy)                 │
+  │  • External link detection                       │
+  │  • Spam pattern detection                        │
+  │  • Threat/harassment ML classifier              │
+  └───────────────────────┬─────────────────────────┘
+                          │
+              ┌───────────┴───────────┐
+              │                       │
+         PASSED                   FLAGGED
+              │                       │
+              ▼                       ▼
+       ┌────────────┐          ┌────────────────────┐
+       │  Deliver   │          │  What was flagged? │
+       │  Message   │          └─────────┬──────────┘
+       └────────────┘                    │
+                            ┌────────────┼────────────┐
+                            │            │            │
+                         Phone#      Profanity    Threat
+                            │            │            │
+                            ▼            ▼            ▼
+                       ┌────────┐  ┌────────┐  ┌────────────┐
+                       │ Block  │  │ Censor │  │ Block +    │
+                       │ entire │  │ words  │  │ Report to  │
+                       │ message│  │ with   │  │ Safety     │
+                       │        │  │ ***    │  │ Team       │
+                       └────────┘  └────────┘  └────────────┘
+
+BLOCKED CONTENT:
+─────────────────────────────
+• Personal phone numbers
+• Email addresses
+• Social media handles
+• Payment requests outside app
+• Links to external sites
+```
+
+### Chat APIs
+
+```
+# Messages
+GET    /trips/{trip_id}/messages               # Get chat history
+POST   /trips/{trip_id}/messages               # Send message
+PUT    /trips/{trip_id}/messages/{id}/read     # Mark as read
+POST   /trips/{trip_id}/messages/image         # Upload & send image
+
+# Quick Replies
+GET    /chat/quick-replies                     # Get available quick replies
+POST   /trips/{trip_id}/messages/quick-reply   # Send quick reply
+
+# Call (Phone Masking)
+POST   /trips/{trip_id}/call                   # Initiate masked call
+
+# WebSocket
+WS     /ws/chat?trip_id={trip_id}&token={jwt}  # Real-time connection
+
+# Admin
+GET    /admin/chat/flagged                     # Flagged messages
+PUT    /admin/chat/messages/{id}/review        # Review flagged
+GET    /admin/trips/{trip_id}/chat             # View trip chat (support)
+```
+
+### Phone Number Masking
+
+```
+PRIVACY-PRESERVING CALLS:
+─────────────────────────────────────────────────────────
+
+  Instead of exposing real phone numbers:
+
+  RIDER: +91-98765-XXXXX (hidden)
+  DRIVER: +91-98123-XXXXX (hidden)
+
+  MASKED NUMBER: +91-11111-00123 (temporary)
+
+  ┌─────────┐  Calls masked     ┌──────────────┐     Routes to     ┌─────────┐
+  │  Rider  │  number           │  Telephony   │     real number   │ Driver  │
+  │         │──────────────────►│  Provider    │──────────────────►│         │
+  │         │                   │  (Exotel)    │                   │         │
+  └─────────┘                   └──────────────┘                   └─────────┘
+                                       │
+                                       │ Call logs recorded
+                                       │ (duration, timestamps)
+                                       ▼
+                                ┌──────────────┐
+                                │   call_logs  │
+                                │    table     │
+                                └──────────────┘
+
+  BENEFITS:
+  • Real numbers never shared
+  • Call history tracked
+  • Works even after trip for disputes (limited time)
+  • Auto-expires 24 hours after trip
+```
+
+---
+
+## 📋 Audit & Compliance (GDPR)
+
+### Overview
+Comprehensive audit logging, data privacy controls, consent management, and compliance reporting for regulatory requirements including GDPR, and local data protection laws.
+
+### Compliance Components
+
+| Component | Purpose | Regulation |
+|-----------|---------|------------|
+| **Consent Management** | Track user permissions | GDPR Art. 7 |
+| **Data Export** | Right to access | GDPR Art. 15 |
+| **Data Deletion** | Right to be forgotten | GDPR Art. 17 |
+| **Audit Logs** | Track all data access | General compliance |
+| **Session Management** | Track login/security | Security + Privacy |
+| **Policy Versioning** | T&C change tracking | Contract law |
+
+### Consent Management
+
+```
+USER CONSENT TYPES:
+─────────────────────────────────────────────────────────
+
+┌───────────────────────────────────────────────────────┐
+│                  CONSENT CATEGORIES                    │
+├───────────────────────────────────────────────────────┤
+│                                                        │
+│  REQUIRED (Cannot use app without):                   │
+│  ───────────────────────────────────                  │
+│  ✓ Terms of Service                                   │
+│  ✓ Privacy Policy                                     │
+│  ✓ Location Tracking (core functionality)             │
+│                                                        │
+│  OPTIONAL (User can decline):                         │
+│  ───────────────────────────────                      │
+│  ○ Marketing Emails                                   │
+│  ○ Marketing SMS                                      │
+│  ○ Push Notifications (promos)                        │
+│  ○ Data Sharing with partners                         │
+│  ○ Personalized recommendations                       │
+│                                                        │
+└───────────────────────────────────────────────────────┘
+
+CONSENT FLOW:
+─────────────────────────────────────────────────────────
+
+  New User Registration
+         │
+         ▼
+  ┌─────────────────────────────┐
+  │  CONSENT SCREEN             │
+  │                             │
+  │  Required:                  │
+  │  ☑ I agree to Terms of     │
+  │    Service                  │
+  │  ☑ I agree to Privacy      │
+  │    Policy                   │
+  │  ☑ Allow location tracking │
+  │                             │
+  │  Optional:                  │
+  │  ☐ Send me promotional     │
+  │    offers via email         │
+  │  ☐ Send me SMS updates     │
+  │                             │
+  │  [Continue]                 │
+  │                             │
+  └─────────────────────────────┘
+         │
+         ▼
+  ┌─────────────────────────────┐
+  │  LOG CONSENT EVENT          │
+  │  ─────────────────────      │
+  │  timestamp, user_id,        │
+  │  consent_type, action,      │
+  │  policy_version, IP,        │
+  │  device_info                │
+  └─────────────────────────────┘
+```
+
+### Data Export (Right to Access)
+
+```
+DATA EXPORT FLOW:
+─────────────────────────────────────────────────────────
+
+  User requests data export
+  (Settings → Privacy → Request my data)
+         │
+         ▼
+  ┌─────────────────────────────┐
+  │  SELECT DATA TYPES          │
+  │  ─────────────────────      │
+  │  ☑ Profile information     │
+  │  ☑ Trip history            │
+  │  ☑ Payment records         │
+  │  ☑ Ratings given/received  │
+  │  ☑ Messages                │
+  │  ☑ Location history        │
+  │  ☐ All data                │
+  │                             │
+  │  Format: [JSON ▼]           │
+  │                             │
+  │  [Request Export]           │
+  └─────────────────────────────┘
+         │
+         ▼
+  ┌─────────────────────────────┐
+  │  PROCESSING (Background)    │
+  │  ─────────────────────      │
+  │  • Query all selected data  │
+  │  • Format as JSON/CSV       │
+  │  • Compress (ZIP)           │
+  │  • Upload to secure storage │
+  │  • Generate signed URL      │
+  │  • Set expiry (7 days)      │
+  └─────────────────────────────┘
+         │
+         ▼
+  ┌─────────────────────────────┐
+  │  NOTIFY USER                │
+  │  ─────────────────────      │
+  │  "Your data export is       │
+  │   ready. Download within    │
+  │   7 days."                  │
+  │                             │
+  │  [Download] (signed URL)    │
+  └─────────────────────────────┘
+
+PROCESSING TIME:
+─────────────────────────────
+< 1 year of data:  ~1 hour
+1-3 years:         ~4 hours
+> 3 years:         ~24 hours
+```
+
+### Data Deletion (Right to be Forgotten)
+
+```
+DATA DELETION FLOW:
+─────────────────────────────────────────────────────────
+
+  User requests deletion
+  (Settings → Privacy → Delete my account)
+         │
+         ▼
+  ┌─────────────────────────────┐
+  │  CONFIRMATION               │
+  │  ─────────────────────      │
+  │  ⚠ This action cannot      │
+  │    be undone                │
+  │                             │
+  │  Please type "DELETE" to    │
+  │  confirm: [________]        │
+  │                             │
+  │  Reason (optional):         │
+  │  [________________]         │
+  │                             │
+  │  [Cancel] [Delete Account]  │
+  └─────────────────────────────┘
+         │
+         ▼
+  ┌─────────────────────────────────────────────────────┐
+  │                    DELETION PROCESS                  │
+  ├─────────────────────────────────────────────────────┤
+  │                                                      │
+  │  1. CHECK FOR BLOCKERS:                             │
+  │     • Active trips → Cannot delete                  │
+  │     • Pending payments → Cannot delete              │
+  │     • Outstanding balance → Cannot delete           │
+  │     • Legal hold → Deletion paused                  │
+  │                                                      │
+  │  2. IMMEDIATE ACTIONS:                              │
+  │     • Deactivate account                            │
+  │     • Invalidate all sessions                       │
+  │     • Cancel scheduled rides                        │
+  │                                                      │
+  │  3. SCHEDULED DELETION (30 days):                   │
+  │     • Hold period for recovery                      │
+  │     • Legal compliance retention                    │
+  │     • After 30 days: Permanent deletion             │
+  │                                                      │
+  │  4. DATA HANDLING:                                  │
+  │     • Profile data: DELETED                         │
+  │     • Trip history: ANONYMIZED (stats kept)         │
+  │     • Payment records: RETAINED 7 years (legal)     │
+  │     • Messages: DELETED                             │
+  │     • Location history: DELETED                     │
+  │     • Ratings: ANONYMIZED                           │
+  │                                                      │
+  │  5. NOTIFY USER:                                    │
+  │     • Confirmation email                            │
+  │     • 30-day recovery instructions                  │
+  │                                                      │
+  └─────────────────────────────────────────────────────┘
+
+LEGAL RETENTION REQUIREMENTS:
+─────────────────────────────
+Payment records:     7 years (tax law)
+Driver documents:    1 year after quit (labor law)
+Safety incidents:    10 years (liability)
+Fraud evidence:      10 years (legal)
+```
+
+### Audit Logging
+
+```
+AUDIT LOG COVERAGE:
+─────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────────────────┐
+│                  WHAT WE LOG                            │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  USER ACTIONS:                                          │
+│  ─────────────────────────                             │
+│  • Login / Logout                                       │
+│  • Profile changes                                      │
+│  • Password changes                                     │
+│  • Payment method changes                               │
+│  • Location permission changes                          │
+│  • Privacy settings changes                             │
+│  • Data export requests                                 │
+│  • Account deletion requests                            │
+│                                                         │
+│  ADMIN ACTIONS:                                         │
+│  ─────────────────────────                             │
+│  • User data access (who, what, when, why)             │
+│  • Account modifications                                │
+│  • Suspensions / Bans                                   │
+│  • Refunds issued                                       │
+│  • Settings changes                                     │
+│  • Report exports                                       │
+│                                                         │
+│  SYSTEM EVENTS:                                         │
+│  ─────────────────────────                             │
+│  • API access (aggregated)                              │
+│  • Failed login attempts                                │
+│  • Security alerts                                      │
+│  • Data migrations                                      │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+
+AUDIT LOG ENTRY EXAMPLE:
+─────────────────────────────
+{
+  "log_id": "uuid",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "actor_type": "admin",
+  "actor_id": "admin-uuid",
+  "action": "VIEW_USER_DATA",
+  "target_type": "rider",
+  "target_id": "rider-uuid",
+  "resource": "payment_methods",
+  "reason": "Support ticket #12345",
+  "ip_address": "203.0.113.45",
+  "user_agent": "Chrome/120..."
+}
+```
+
+### Session Management
+
+```
+SESSION SECURITY:
+─────────────────────────────────────────────────────────
+
+  LOGIN EVENT
+       │
+       ▼
+  ┌─────────────────────────────┐
+  │  CREATE SESSION             │
+  │  ─────────────────────      │
+  │  • Generate JWT token       │
+  │  • Hash and store           │
+  │  • Capture device info      │
+  │  • Record IP + location     │
+  │  • Set expiry (30 days)     │
+  └─────────────────────────────┘
+       │
+       ▼
+  ┌─────────────────────────────────────────────────────┐
+  │               ACTIVE SESSION MONITORING              │
+  ├─────────────────────────────────────────────────────┤
+  │                                                      │
+  │  TRACK:                                              │
+  │  • Last active timestamp                             │
+  │  • IP changes                                        │
+  │  • Device changes                                    │
+  │                                                      │
+  │  ALERT IF:                                           │
+  │  • Login from new device                             │
+  │  • Login from new city/country                       │
+  │  • Multiple simultaneous sessions                    │
+  │  • Session used from suspicious IP                   │
+  │                                                      │
+  │  AUTO-TERMINATE IF:                                  │
+  │  • Expired                                           │
+  │  • User changed password                             │
+  │  • Account suspended                                 │
+  │  • Security breach detected                          │
+  │                                                      │
+  └─────────────────────────────────────────────────────┘
+
+USER SESSION VIEW (Settings → Security):
+─────────────────────────────────────────────────────────
+┌─────────────────────────────────────────────────────────┐
+│  ACTIVE SESSIONS                                        │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  📱 iPhone 14 Pro                          [Current]    │
+│     Mumbai, India • Last active: Now                    │
+│                                                         │
+│  📱 Samsung Galaxy S22                     [Logout]     │
+│     Delhi, India • Last active: 2 days ago              │
+│                                                         │
+│  💻 Chrome on Windows                      [Logout]     │
+│     Mumbai, India • Last active: 1 week ago             │
+│                                                         │
+│  [Logout from all other devices]                        │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Compliance APIs
+
+```
+# User Privacy Controls
+GET    /rider/privacy/consent                  # Get current consents
+PUT    /rider/privacy/consent                  # Update consents
+POST   /rider/privacy/data-export              # Request data export
+GET    /rider/privacy/data-export/{id}         # Check export status
+GET    /rider/privacy/data-export/{id}/download # Download export
+POST   /rider/privacy/data-deletion            # Request account deletion
+DELETE /rider/privacy/data-deletion/{id}       # Cancel deletion request
+
+# Session Management
+GET    /rider/security/sessions                # List active sessions
+DELETE /rider/security/sessions/{id}           # Logout specific session
+DELETE /rider/security/sessions                # Logout all sessions
+
+# Same for drivers
+GET    /driver/privacy/consent
+PUT    /driver/privacy/consent
+POST   /driver/privacy/data-export
+...
+
+# Admin Audit
+GET    /admin/audit/logs                       # Search audit logs
+GET    /admin/audit/logs/{log_id}              # Get log details
+GET    /admin/audit/user/{type}/{id}           # User audit history
+GET    /admin/audit/admin/{admin_id}           # Admin action history
+POST   /admin/audit/export                     # Export audit logs
+
+# Compliance Management
+GET    /admin/compliance/deletion-requests     # Pending deletions
+PUT    /admin/compliance/deletion-requests/{id} # Process deletion
+GET    /admin/compliance/export-requests       # Pending exports
+GET    /admin/compliance/consents              # Consent analytics
+POST   /admin/compliance/reports               # Generate compliance report
+
+# Policy Management
+GET    /admin/policies                         # List policies
+POST   /admin/policies                         # Create policy version
+PUT    /admin/policies/{id}/activate           # Make current
+GET    /public/policies/current                # Get current policies
 ```
 
 ---
