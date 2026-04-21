@@ -25,6 +25,19 @@
 9. [Payment · COD · Ledger](#14-payment--cod--ledger)
 10. [Security, Safety & Compliance](#15-security-safety--compliance)
 11. [Non-Functional Requirements](#16-non-functional-requirements)
+12. [Notifications & Communications](#17-notifications--communications)
+13. [Support Operations](#18-support-operations)
+14. [Localization & Multi-Tenancy](#19-localization--multi-tenancy)
+15. [Observability, Reliability & DR](#20-observability-reliability--dr)
+16. [Mobile Platform Concerns](#21-mobile-platform-concerns)
+17. [Production Readiness Checklist](#22-production-readiness-checklist)
+18. [Algorithms & Engines](#23-algorithms--engines)
+19. [Event Taxonomy (Kafka Topic Catalog)](#24-event-taxonomy-kafka-topic-catalog)
+20. [Error Code Catalog & API Versioning](#25-error-code-catalog--api-versioning)
+21. [Deployment, CI/CD & SRE Runbooks](#26-deployment-cicd--sre-runbooks)
+22. [Integrations & Compliance Matrix](#27-integrations--compliance-matrix)
+23. [Capacity, Cost & Scale Model](#28-capacity-cost--scale-model)
+24. [Panel Design Diagrams (one per panel)](#29-panel-design-diagrams)
 
 ---
 
@@ -152,6 +165,31 @@ Courier  : Rider/Merchant → Driver(FM) → Origin Hub → Sort → Line-haul �
 | Notification toggles | Order/safety always on; promos optional |
 | Multi-language | BN / EN / others |
 | Support tickets | Auto-categorized, priority-routed |
+| App update enforcement | Force-upgrade flag served by config service |
+| Maintenance banner | Per-city advisory pushed via remote config |
+
+### 4.6 Power Rider Features (Uber/Pathao parity)
+
+| Feature | Description | Logic |
+|---------|-------------|-------|
+| **Multi-stop ride** | Up to 3 intermediate stops | Re-prices on each stop add/remove; route re-optimised |
+| **Ride for someone else** | Book on behalf of contact | Recipient gets SMS w/ live link + driver call masked |
+| **Scheduled / recurring** | One-shot or weekly recurring | Pre-dispatch 10 min before; auto-cancel if no driver in 5 min |
+| **Favorite / blocked drivers** | Per-rider lists | Affects offer eligibility filter |
+| **Pickup PIN** | 4-digit code shared by app | Driver must enter to start trip; mitigates wrong-pickup |
+| **Fare split** | Split bill across riders | Each pays their share via own payment method |
+| **Ride preferences** | Quiet ride, AC, music off, pet-friendly | Hint passed to driver; not enforced |
+| **Lost & Found** | Report item from past trip | Routes to driver via masked call + support ticket |
+| **Trip insurance** | Per-trip optional cover | Underwritten by 3rd party; receipt attached |
+| **Outstation / rental** | Hourly or city-to-city packages | Different pricing engine + driver pool |
+| **Receipts & invoices** | PDF per trip + monthly statement | Email + in-app download; GST/VAT compliant |
+| **Subscription pass** | E.g. Uber One / Pathao Pro | Discounts, free delivery threshold, priority dispatch |
+| **Loyalty / rewards** | Points per spend | Redeem for ride credits; tier badges |
+| **Referral program** | Referrer + referee credits | Anti-abuse via device + payment-method graph |
+| **Corporate / business profile** | Switch personal ↔ business | Bills to org; manager approval workflow; SSO supported |
+| **Family / Teen account** | Linked dependent accounts | Live tracking + spend cap shared with primary |
+| **Voice notes in chat** | 30-s clips | Stored 7 days; auto-transcribed for safety review |
+| **Annotated pickup spot** | Drop a precise pin + photo | Reduces pickup confusion; cached per address |
 
 ---
 
@@ -235,6 +273,27 @@ Surge:   Driver receives 70–80% of surge amount
 | 4.0 – 4.2 | Mandatory training |
 | < 4.0 | Review / suspend |
 
+### 5.7 Driver Quality-of-Life & Production Features
+
+| Feature | Description | Logic |
+|---------|-------------|-------|
+| **Quest / Streak bonuses** | "Complete 30 trips this week → +500" | Tracked in incentives service; ledger credit on completion |
+| **Long-pickup compensation** | Pickup > X km auto-pays extra | Calculated at trip start |
+| **Wait-time charges** | After 5-min free → per-min charge | Auto-added to fare; capped per city |
+| **Cancellation fee** | Charged to rider after grace period | Split with driver per policy |
+| **Toll auto-detection** | Geofence + lane data | Added to fare with receipt |
+| **Document expiry alerts** | License/Insurance/RC expiry T-30 / T-7 / T-1 | Push + email; soft-block on expiry |
+| **Vehicle inspection reminders** | Annual or per-N-trips | Photo upload, hub-staff sign-off |
+| **In-trip safety** | Trip recording (audio, opt-in), speed alert, fatigue warning | Audio encrypted on-device, uploaded only on dispute |
+| **Earnings goal tracker** | Daily target + progress bar | Local computation + summary |
+| **Fuel / EV charging perks** | Partner discounts | Static partner list + redemption code |
+| **Driver chat / community** | In-app feed, support FAQ | Read-only feed by ops |
+| **Driver-to-driver referral** | Bonus on referee's first 50 trips | Referral table; anti-fraud graph |
+| **Vehicle swap / second driver** | One vehicle, two drivers | Active session per device; KYC per driver |
+| **Earnings withdrawal limits** | Daily/weekly caps + KYC tier | Anti-money-laundering |
+| **Tax / TIN management** | Annual statement, withholding | Country-specific |
+| **Roadside assistance** | One-tap from in-trip menu | Routes to partner; cost flagged |
+
 ---
 
 ## 6. 🍴 Restaurant Panel Features
@@ -286,6 +345,25 @@ Surge:   Driver receives 70–80% of surge amount
 | Self-service discounts | % or flat, time-bounded |
 | Combo bundles | Cross-item pricing |
 | Happy-hour schedule | Auto-activate in date range |
+
+### 6.6 Restaurant Production Features
+
+| Feature | Description | Logic |
+|---------|-------------|-------|
+| **86 list (out of stock)** | One-tap mark item unavailable | Invalidates search index + cart re-validation |
+| **Stock count per item** | Optional inventory | Auto-86 on zero; manual reset |
+| **Order modification mid-prep** | Customer adds/removes item before "preparing" | Restaurant accept/decline; price diff posted to ledger |
+| **Multi-printer routing** | Kitchen vs bar vs packing | Configurable per category |
+| **Self-delivery mode** | Restaurant uses own riders | Skips dispatch; commission tier differs |
+| **Sponsored listings / ads** | Pay-per-click placement | Ad service + budget cap |
+| **Customer review reply** | Public reply to ratings | Auto-moderation + 1 reply per review |
+| **Refund issuance** | Partial/full at restaurant | 4-eyes if > threshold; ledger reversal |
+| **Tax invoice config** | GST/VAT number on receipts | Per outlet |
+| **Store-level KPIs** | Acceptance %, prep time, rejection % | Affects search ranking |
+| **Force-close / break mode** | Pause incoming for 15-60 min | Visible to customer with ETA-back-online |
+| **Tablet device management** | Tablet provisioning, remote wipe, OTA | MDM-lite; heartbeat every 60 s |
+| **Holiday calendar** | Closed-day schedule | Honoured by search filter |
+| **Image moderation** | Auto + human for menu photos | Blocks nudity/violations |
 
 ---
 
@@ -346,6 +424,28 @@ Events pushed to merchant's registered URL (HMAC-signed, replay-protected):
 | `shipment.delivered` | awb_no, cod_amount?, ts |
 | `shipment.exception` | awb_no, code, notes |
 | `shipment.rto` | awb_no, reason |
+
+Webhook delivery: at-least-once with **exponential backoff** (1m, 5m, 30m, 2h, 12h, 24h × 3); dead-letter queue after 7 days; merchant can replay from dashboard.
+
+### 7.6 Merchant Production Features
+
+| Feature | Description | Logic |
+|---------|-------------|-------|
+| **Pickup address book** | Multiple warehouses CRUD | Default flagged; geocoded |
+| **Reverse pickup (returns)** | Customer-to-warehouse | Reverse AWB lifecycle |
+| **Per-shipment insurance** | Opt-in cover up to declared value | Premium added to price |
+| **Fragile / DG declaration** | Restricted goods list | Blocks line-haul if not eligible |
+| **Bulk label print** | One PDF for batch | Async, downloadable |
+| **Postpaid invoicing** | Credit limit + monthly invoice | Credit-check + auto-suspend on overdue |
+| **COD pincode allow-list** | Per-merchant serviceability | Block at booking if not allowed |
+| **API sandbox** | Test environment + dummy webhooks | Separate keyspace |
+| **Plugin integrations** | Shopify / WooCommerce / Magento | OAuth + per-store mapping |
+| **Sub-user accounts** | Ops, Finance, Viewer roles | Scoped permissions, audit |
+| **Brand customization** | Logo on label, on tracking page | Approved by admin |
+| **Custom packaging request** | Fragile wrap, branded box | Surcharge per shipment |
+| **Pickup SLA** | Time-window booking with auto-cancel | Driver assigned in window |
+| **Manifest export** | Daily handed-over PDF | For sender's records |
+| **Disputes / claims** | Lost/damaged/short COD | SLA 48 h; ledger reversal on approval |
 
 ---
 
@@ -418,6 +518,26 @@ Standard codes: `damaged`, `missing`, `address_wrong`, `recipient_unavailable`, 
 
 Tablet app stores scans in IndexedDB; flushes to `/hub/scans/bulk` on reconnect. Server dedupes on `(awb_no, hub_id, scan_type, client_scan_id)` to tolerate replay.
 
+### 8.9 Hub Production Features
+
+| Feature | Description | Logic |
+|---------|-------------|-------|
+| **Bag-level scanning** | Bag → many AWBs | Hierarchical scan; bag QR enables 1-scan handover |
+| **Cage / location map** | Bin assignments by destination | Auto sort suggestion |
+| **Capacity & occupancy** | Real-time hub fill % | Alerts at 80% / 95%; blocks new inbound |
+| **Dock scheduling** | Truck arrival/departure slots | Avoids congestion; visible to line-haul drivers |
+| **Gate pass (in/out)** | Vehicle entry log | Security desk + CCTV cross-ref |
+| **Cross-docking** | Skip storage, direct transfer | Auto-flagged when transit time short |
+| **Damage assessment** | Photo + severity grade | Triggers claim workflow |
+| **Cycle count / stock take** | Periodic full audit | Reports discrepancies |
+| **Chain of custody log** | Every scan = custody transfer | Append-only; used in disputes |
+| **CCTV reference** | Camera ID + timestamp linked to scan | For claims/dispute review |
+| **Returns processing** | RTO inbound, sort, hand to merchant | Separate cage |
+| **Cut-off times** | Per lane daily cut-off | Late shipments roll to next manifest |
+| **Hub roster / shift mgmt** | Staff schedule, attendance | Affects KPI baselines |
+| **Power & connectivity SLA** | UPS + dual ISP requirement | Health-check to admin |
+| **Hub-to-hub transfer slip** | Reconciliation doc per manifest | Signed by both supervisors |
+
 ---
 
 ## 9. 👨‍💼 Admin Panel Features
@@ -482,6 +602,27 @@ Tablet app stores scans in IndexedDB; flushes to `/hub/scans/bulk` on reconnect.
 | Restaurant/merchant payouts | CSV |
 | Courier SLA breach | CSV |
 | Tax/GST reports | PDF |
+
+### 9.8 Admin Production Features
+
+| Feature | Description | Logic |
+|---------|-------------|-------|
+| **Feature flags / experiments** | Per-city, per-cohort rollouts | LaunchDarkly-style; A/B with stat-sig guardrails |
+| **Geofence / zone editor** | Polygon drawing for zones, surge, no-go | Versioned; activates via remote config |
+| **City onboarding wizard** | Activate new city: tariff, hubs, zones, ops staff | One-page workflow |
+| **Holiday / curfew calendar** | Service blackouts, special tariffs | Auto-applied to pricing engine |
+| **Notification campaigns** | Push / SMS / email broadcast | Segmentation + frequency caps |
+| **Surge override** | Manual emergency surge / cap | Audited; expires automatically |
+| **Tariff calendar** | Festival / event pricing | Effective-from / effective-to |
+| **Document templates** | T&C, privacy, driver agreement versions | User must re-accept on update |
+| **Help center CMS** | FAQ, articles, in-app help | Localized |
+| **Block-list management** | Devices, IPs, payment instruments, BIN | Linked to fraud signals |
+| **Compliance dashboard** | KYC age, doc-expiry, tax filings | Regulatory readiness |
+| **Driver / restaurant tier program** | Bronze/Silver/Gold by score | Visible benefits + auto-tiering |
+| **Live ops war room** | Multi-screen, on-call staff | Filter by city/incident |
+| **Audit log viewer** | Search by actor, entity, action | Tamper-evident (signed/append-only) |
+| **Data exports & lake sync** | Daily warehouse load (Snowflake/BigQuery) | PII redaction by role |
+| **Bulk operations** | Bulk approve/reject/refund (with limits) | 4-eyes + audit |
 
 ---
 
@@ -1116,6 +1257,971 @@ Deferred trigger enforces balance invariant; UNIQUE `(txn_id, account_id, direct
 
 ---
 
+## 17. Notifications & Communications
+
+A dedicated **Notification Service** fans out events to the right channel based on user preferences and message criticality.
+
+### 17.1 Channels
+
+| Channel | Provider examples | Use cases |
+|---------|-------------------|-----------|
+| **Push (APNs / FCM / HMS)** | Apple, Google, Huawei | Order/trip status, offers, safety |
+| **SMS** | Twilio, MessageBird, local aggregators | OTP, recipient alerts, fallback |
+| **Voice / IVR** | Twilio, Exotel | OTP fallback, masked calls |
+| **Email** | SES, SendGrid | Receipts, invoices, weekly summaries |
+| **WhatsApp Business** | Meta Cloud API | Order updates, support replies |
+| **In-app inbox** | Internal | Persistent message history |
+| **Webhook** | Merchant URLs | B2B event streams |
+
+### 17.2 Categories & priority
+
+| Category | Examples | User opt-out? | Channel rules |
+|----------|----------|---------------|---------------|
+| **Critical / safety** | SOS ack, account compromise | No | All channels, retry until ack |
+| **Transactional** | OTP, order/trip status, payment | No | Push first, SMS fallback in 30s |
+| **Operational** | Driver doc expiry, payout sent | Limited | Push + email |
+| **Marketing** | Promos, recommendations | Yes | Frequency-capped (max 3/week) |
+
+### 17.3 Engineering controls
+
+- **Template service** with localized variants and approval workflow
+- **Idempotent send** keyed on `(user_id, template_id, dedup_key)` (15-min window)
+- **Quiet hours** per user (default 22:00–07:00 local) — marketing only
+- **Push token registry** with platform, app version, last-seen; auto-prune after 60d inactive
+- **Deep link / universal link** routing for every notification
+- **Bounce / unsubscribe handling** synced from providers
+- **Throughput**: 50k push/sec, 5k SMS/sec sustained per region
+- **Cost guardrails**: per-campaign budget caps; per-user spend ceiling (anti-bombing)
+
+---
+
+## 18. Support Operations
+
+### 18.1 Support stack
+
+| Layer | Detail |
+|-------|--------|
+| **In-app help** | Self-serve articles, FAQ, contextual help by screen |
+| **Bot triage** | LLM-assisted intent classification + canned answers |
+| **Live chat** | Tier-1 agents, in-app and WhatsApp |
+| **Voice support** | Premium / safety incidents; recorded for QA |
+| **Specialist queues** | Safety, Payments, KYC, Hub, Merchant API |
+| **Field ops** | Hub disputes, driver onsite issues |
+
+### 18.2 Ticket lifecycle
+
+```
+open → assigned → in_progress → waiting_customer → resolved → closed
+                              └▶ escalated → tier2/specialist
+```
+
+### 18.3 SLAs (defaults)
+
+| Priority | First response | Resolution |
+|----------|---------------|------------|
+| P0 (safety / outage) | < 5 min | < 1 h |
+| P1 (payment, COD) | < 30 min | < 8 h |
+| P2 (general) | < 4 h | < 48 h |
+| P3 (info) | < 24 h | < 5 d |
+
+### 18.4 Tooling
+
+- 360° user view (trips, orders, payments, devices, prior tickets)
+- One-click compensation (capped, audited)
+- Macros + saved replies, multi-language
+- CSAT survey on close, agent QA scorecard
+- PII access redaction by agent role (e.g., NID hidden unless reason recorded)
+
+---
+
+## 19. Localization & Multi-Tenancy
+
+### 19.1 City / country configuration
+
+Every city is a **first-class config** with isolated overrides:
+
+| Knob | Example |
+|------|---------|
+| Currency | BDT, INR, USD |
+| Timezone | Asia/Dhaka |
+| Languages | bn, en |
+| Vehicle types | bike, auto, sedan, suv |
+| Tariff cards | base, per-km, per-min, surcharges |
+| Payment methods | bKash, Nagad, card, cash |
+| Regulatory IDs | GST, VAT, NID format |
+| Working hours / curfews | per city |
+| Service eligibility | Ride ✅ / Food ✅ / Parcel ✅ / Courier hubs |
+
+### 19.2 i18n
+
+- All user-facing strings keyed; ICU MessageFormat
+- RTL support (future markets)
+- Number/date/currency formatted by locale
+- App-side translation bundles delivered via remote config; OTA-updatable
+- Push templates & SMS texts localized per recipient preference
+
+### 19.3 Data residency
+
+- Region-pinned writes for money movement (no cross-border ledger writes)
+- Data export tools to satisfy local DPA / DPDPA / GDPR
+
+---
+
+## 20. Observability, Reliability & DR
+
+### 20.1 Telemetry
+
+| Pillar | Stack |
+|--------|-------|
+| **Metrics** | Prometheus + Thanos / Grafana Mimir |
+| **Logs** | OpenTelemetry → Loki / Elastic |
+| **Traces** | OpenTelemetry → Tempo / Jaeger |
+| **RUM (mobile/web)** | Sentry / Firebase Performance |
+| **Synthetic checks** | Per-region probes for critical APIs + WS |
+
+### 20.2 SLOs (rollup)
+
+| Service | SLO | Error budget |
+|---------|-----|--------------|
+| Identity / Auth | 99.95% successful auth | 22 min/month |
+| Ride dispatch | 99.9% match < 3 s | 43 min/month |
+| Payments | 99.99% successful capture | 4 min/month |
+| Hub scan API | 99.9% p95 < 500 ms | 43 min/month |
+| WS realtime | < 0.5% drops / 5-min | rolling |
+
+### 20.3 Reliability tactics
+
+- **Cell-based deploys** per city; blast radius = one cell
+- **Bulkheaded thread-pools / connection-pools**
+- **Circuit breakers + retries with jitter** at clients
+- **Outbox pattern** for DB → Kafka (no dual-writes)
+- **Idempotency keys** required on all state-changing endpoints
+- **Backpressure**: shed marketing pushes first under load
+- **Chaos engineering**: monthly game-day per critical service
+
+### 20.4 Disaster recovery
+
+| Tier | RPO | RTO | Strategy |
+|------|-----|-----|----------|
+| Payments / Ledger | < 1 min | < 15 min | Sync replica + cross-region failover |
+| Trips / Orders | 5 min | 30 min | Async replica + region failover |
+| Location / Cache | Best-effort | Reconstructible | Rebuild from device telemetry |
+| Reports / Lake | 24 h | 24 h | Daily snapshot |
+
+- Quarterly **DR drills**; documented runbooks per service
+- **Backup encryption** with separate KMS key; periodic restore validation
+- **On-call rotations** with PagerDuty/Opsgenie; primary + secondary; sev-1 page < 5 min
+
+---
+
+## 21. Mobile Platform Concerns
+
+### 21.1 Lifecycle
+
+- **Force-upgrade** when minimum supported version surpassed
+- **Soft-upgrade** banner with "remind me later" (capped at N reminders)
+- **Remote config** with safe defaults — apps must never crash on missing keys
+- **Feature flag SDK** with offline cache + last-known-good
+- **Crash & ANR reporting** (Crashlytics / Sentry); crash-free user > 99.5%
+
+### 21.2 Offline-first
+
+| Concern | Approach |
+|---------|----------|
+| Driver app | Queue location frames, scans, offer-accepts; replay with `client_id` dedupe |
+| Hub app | IndexedDB scan queue, conflict-free replay |
+| Rider app | Last known order / trip cached for tracking screen |
+| Maps | Pre-fetched tile cache for active route |
+
+### 21.3 Performance budgets
+
+- Cold start < 2.0 s on mid-tier Android
+- Screen TTI < 1.5 s for top 5 screens
+- App size: rider < 60 MB, driver < 80 MB (with on-demand modules)
+- Battery: < 6%/hour while driver online (background location)
+
+### 21.4 Security on device
+
+- Keychain / Keystore for refresh tokens; never plain disk
+- Root / jailbreak detection (warn, not block, except finance flows)
+- Certificate pinning for API + payment endpoints
+- Screenshot / overlay protection on payment & OTP screens
+- Tamper detection (Play Integrity / App Attest)
+
+---
+
+## 22. Production Readiness Checklist
+
+Before a city / service goes live:
+
+- [ ] Capacity plan reviewed; load test at **3× peak** passed
+- [ ] All endpoints have rate limits and abuse controls
+- [ ] All mutating endpoints accept `Idempotency-Key`
+- [ ] All money flows go through the double-entry ledger (no direct balance updates)
+- [ ] PII encrypted at rest + masked in logs; blind indexes for searchable PII
+- [ ] WebSocket uses ticket auth; no JWT in URLs
+- [ ] mTLS enforced inside the mesh
+- [ ] WAF + bot mitigation active at edge
+- [ ] Backups verified by restore drill within 90 days
+- [ ] DR drill in last 90 days; runbook updated
+- [ ] On-call rotation defined; pager test green
+- [ ] Dashboards & alerts mapped to SLOs (page on burn rate)
+- [ ] Feature flags enable safe rollback
+- [ ] Privacy review (DPIA) signed off
+- [ ] T&C / Privacy / Driver Agreement localized & accepted
+- [ ] Tax / invoice formats validated by finance
+- [ ] KYC vendors integrated with SLAs
+- [ ] Payment provider failover tested
+- [ ] Push, SMS, email deliverability monitored per region
+- [ ] Help-center articles + in-app help published
+- [ ] Support agents trained; macros and SLAs configured
+- [ ] Hub physical readiness: power, connectivity, CCTV, scanners, signage
+- [ ] Driver onboarding pipeline tested end-to-end
+- [ ] Merchant onboarding & sandbox tested end-to-end
+- [ ] Restaurant KDS hardware staged & tested
+- [ ] Admin RBAC reviewed; least-privilege enforced
+- [ ] Audit log retention & immutability validated
+- [ ] Compliance: regulatory licenses for ride / courier / payments in force
+
+---
+
+## 23. Algorithms & Engines
+
+### 23.1 Dispatch / matching
+
+**Goal:** assign the best driver to a trip/order in < 3 s while keeping utilisation high and bias low.
+
+**Candidate retrieval**
+1. `GEOSEARCH` in `redis-geo-<city>` for drivers within radius R (default 3 km; expand to 5, 8, 12 km if empty).
+2. Filter: online, `capability` matches service, not on another job, vehicle type allowed, not on rider's block-list, doc not expired.
+
+**Scoring (lower = better)**
+
+```
+score = w1 * eta_to_pickup_s
+      + w2 * (1 - acceptance_rate_7d)
+      + w3 * (1 - rating_norm)         // rating_norm = (rating-4.0)/1.0 clamped
+      + w4 * idle_time_penalty         // reward idle drivers
+      + w5 * detour_cost               // if driver on chained job
+      - w6 * tier_bonus                // gold/silver boost
+      + w7 * pickup_km_penalty_over_X
+      + w8 * fairness_jitter           // small random to break ties
+```
+
+Weights stored in config, A/B-tested per city.
+
+**Offer strategy**
+- **Single-offer** for rides (fastest for rider); **batched-offer to top-K** if acceptance is low (K=3, first-come wins, others get "missed" with small comp).
+- Offer TTL = 8 s; on reject/expire, re-score excluding the driver for 60 s.
+- Starvation guard: any driver online > 20 min with no offer gets a +bias for next round.
+- Global re-dispatch if unmatched after 3 rounds or 30 s → widens radius + surges zone.
+
+**Food dispatch** differs: waits until restaurant ETA minus pickup-travel-time; picks driver who arrives just after food is ready (minimises wait).
+
+**Fairness & bias**
+- No rider demographic used in scoring.
+- Surge pay is transparent to drivers pre-accept.
+- Audit trail: every offer logged with score components for after-the-fact review.
+
+### 23.2 Surge / dynamic pricing
+
+```
+demand   = active_requests_5min(zone)
+supply   = available_drivers(zone)
+raw      = demand / max(supply, 1)
+smoothed = EMA(raw, alpha=0.3)          // hysteresis
+multiplier = lookup(smoothed)           // see surge table §12.4
+```
+
+- **Zone** = hex-H3 level 8 (≈ 460 m edge) or city-defined polygon.
+- Update interval 60 s; change capped at +0.3x per tick (avoid shock).
+- City-level cap (e.g. 3.0x) + regulatory cap where required.
+- Driver-visible heatmap uses same multiplier; published only when delta > 0.1x.
+- Shadow-mode: pricing v2 runs in parallel for 2 weeks before cutover.
+
+### 23.3 ETA & routing
+
+- **Router:** OSRM or Valhalla self-hosted; Mapbox/Google as failover per city.
+- **Distance type:** road-distance for fare, straight-line only as fallback with +20% fudge.
+- **Traffic:** provider-fed where available; internally aggregated travel times from recent trips (per edge, rolling 15 min) override static.
+- **ETA output:** `{distance_m, duration_s, polyline}`; cached 60 s per O-D pair in `redis-cache`.
+- **ETA confidence:** model outputs p50 & p90; UI shows p50, dispatch uses p50, SLA check uses p90.
+
+### 23.4 Pricing engine (tariff resolution)
+
+```
+resolve_tariff(city, service, vehicle, now, zone)
+  → effective_tariff = base_card
+                      ⊕ city_override
+                      ⊕ zone_override
+                      ⊕ time_window (holiday, festival, night)
+                      ⊕ surge_multiplier
+                      ⊕ promo (applied last, capped)
+```
+
+- Tariff rows versioned, `effective_from / effective_to`; audit log on change.
+- Every computed fare persists `tariff_version_id` + the full calc breakdown for receipts/disputes.
+
+### 23.5 Fraud model
+
+**Feature classes**
+- Identity: device fingerprint, SIM change velocity, IP/ASN, account age
+- Behaviour: cancel rate, short-trip rate, same origin/destination cluster
+- Geo: GPS jump (km/s impossible speed), spoofing signature (mock provider, root, emulator)
+- Money: COD-vs-deposit delta, refund/chargeback rate, promo-per-account ratio
+
+**Pipeline**
+- Rule engine (Drools-like) for hard blocks (explainable, regulated).
+- Gradient-boosted model (shadow for 4 weeks before activation) for risk score 0–100.
+- Decisions: `allow`, `challenge` (step-up auth), `review` (manual), `block`.
+- All decisions written to `fraud_decisions` with reason codes; appealable via support.
+
+### 23.6 Search & ranking (food / merchant catalog)
+
+- **Store search:** Elasticsearch index `stores_<city>`; fields `name^3, cuisine^2, tags, menu_preview`.
+- **Ranking:**
+  ```
+  rank = bm25(query)
+       + 0.4 * proximity_score(distance_m)
+       + 0.3 * popularity_30d(orders / impressions)
+       + 0.2 * rating_norm
+       + 0.1 * personalised_cf_score
+       * open_now_boost(1.3 if open)
+       * sponsored_boost (paid; max 20% of top 10)
+  ```
+- **Index updates:** CDC from Mongo menu + Postgres outlet_hours → Kafka → ES within 30 s.
+- **Freshness:** ranked boost for items added in last 30 days; new stores get "cold-start" boost for 14 days capped.
+
+### 23.7 Location pipeline
+
+```
+Driver device (1 frame / 2 s) → WS ingest gateway
+  → Redis geo-index (latest only, per driver)
+  → Kafka `location.driver.updates.<city>` (72 h retention)
+  → Cassandra `location_history` (180 d TTL, bucketed by hour)
+  → Downsampler → Parquet on S3 (1 Hz daily roll-up, 2 y retention)
+```
+
+- **Smoothing:** Kalman filter client-side; server drops points with accuracy > 100 m.
+- **Snap-to-road** on ingestion for trips only (not idle cruise).
+- **Backpressure:** if Kafka lag > 30 s, drop every other frame for idle drivers first.
+
+### 23.8 WebSocket fan-out & scale
+
+- **Per-city WS cluster**; sticky routing by `user_id` hash.
+- Connection budget: 50k concurrent/pod, 500k/city.
+- **Fan-out pub/sub:** Redis streams per channel; consumer coalesces location frames (max 1/sec per viewer).
+- **Graceful drain:** on deploy, broadcast `reconnect` hint; clients rejoin via ticket.
+
+---
+
+## 24. Event Taxonomy (Kafka Topic Catalog)
+
+All events use CloudEvents envelope + Avro/Protobuf payload, registered in a schema registry. Topic keys drive partitioning for ordering within an entity.
+
+| Topic | Key | Producers | Consumers | Retention |
+|-------|-----|-----------|-----------|-----------|
+| `identity.user.created` | user_id | identity | fraud, notification, lake | 30 d |
+| `identity.user.updated` | user_id | identity | lake, search | 7 d |
+| `driver.status.changed` | driver_id | driver | dispatch, ops | 7 d |
+| `location.driver.updates.<city>` | driver_id | ingest | dispatch, location-history | 72 h |
+| `ride.requested` | trip_id | ride | dispatch, pricing, fraud | 30 d |
+| `ride.matched` | trip_id | dispatch | notification, rider, driver | 30 d |
+| `ride.started` / `ride.completed` | trip_id | ride | payment, rating, lake | 30 d |
+| `ride.cancelled` | trip_id | ride | notification, fraud, lake | 30 d |
+| `food.order.placed` | order_id | food | restaurant, dispatch, fraud | 30 d |
+| `food.order.status.changed` | order_id | food | rider WS, lake | 30 d |
+| `courier.shipment.created` | shipment_id | courier | hub, notification, lake | 90 d |
+| `courier.scan.recorded` | shipment_id | hub | courier, merchant webhooks | 90 d |
+| `courier.manifest.dispatched` / `.received` | manifest_id | hub | courier, SLA monitor | 90 d |
+| `cod.collected` | shipment_id | courier | remittance, ledger | 2 y |
+| `remittance.driver.closed` | bag_id | hub | ledger, finance | 7 y |
+| `remittance.hub.deposited` | deposit_id | hub | ledger, finance | 7 y |
+| `payment.intent.created` / `.captured` / `.failed` | intent_id | payment | ledger, fraud, notification | 30 d |
+| `ledger.entry.posted` | txn_id | ledger | analytics | 7 y (compact) |
+| `merchant.shipment.webhook.queued` | shipment_id | courier | webhook-dispatcher | 7 d |
+| `fraud.signal.raised` | subject_id | fraud | admin, notification | 180 d |
+| `sos.events` | user_id | safety | on-call, ops | 2 y |
+| `audit.events` | entity_id | all | lake | 7 y (compact) |
+
+- Partition count sized for 3x current peak throughput; rebalance runbook in §26.
+- **Compaction** enabled where the key's latest state is the useful view (`ledger.entry.posted`, `audit.events`).
+- **Schema evolution:** backward-compatible; breaking change requires new topic suffix `-v2`.
+
+---
+
+## 25. Error Code Catalog & API Versioning
+
+### 25.1 Error envelope (RFC 7807)
+
+```json
+{
+  "type":   "https://errors.superapp.example/ride/no-drivers-nearby",
+  "title":  "No drivers available",
+  "status": 503,
+  "detail": "No eligible drivers within 12 km for vehicle_type=car",
+  "instance": "/v1/rides",
+  "code":   "RIDE_NO_DRIVERS",
+  "request_id": "req_01HZ...",
+  "trace_id":   "0af7651916cd43dd..."
+}
+```
+
+### 25.2 Canonical codes (excerpt)
+
+| Domain | Code | HTTP | Retry? |
+|--------|------|------|--------|
+| Auth | `AUTH_OTP_INVALID` | 401 | No |
+| Auth | `AUTH_OTP_THROTTLED` | 429 | After Retry-After |
+| Auth | `AUTH_DEVICE_UNTRUSTED` | 403 | No |
+| Ride | `RIDE_NO_DRIVERS` | 503 | Yes, with backoff |
+| Ride | `RIDE_NOT_CANCELLABLE` | 409 | No |
+| Ride | `RIDE_INVALID_VEHICLE` | 400 | No |
+| Food | `FOOD_STORE_CLOSED` | 409 | No |
+| Food | `FOOD_ITEM_UNAVAILABLE` | 409 | No (refresh cart) |
+| Courier | `COURIER_LANE_UNSUPPORTED` | 400 | No |
+| Courier | `COURIER_AWB_DUPLICATE` | 409 | Idempotency replay ok |
+| Hub | `HUB_SCAN_OUT_OF_ORDER` | 409 | No |
+| Payment | `PAY_DECLINED` | 402 | No |
+| Payment | `PAY_IDEMPOTENCY_CONFLICT` | 409 | No (same key, diff body) |
+| Payment | `PAY_PROVIDER_TIMEOUT` | 504 | Yes, same Idempotency-Key |
+| Generic | `RATE_LIMITED` | 429 | After Retry-After |
+| Generic | `VALIDATION_FAILED` | 422 | No |
+| Generic | `INTERNAL` | 500 | Yes, bounded |
+
+Full list maintained in a machine-readable YAML alongside the OpenAPI spec.
+
+### 25.3 API versioning & deprecation
+
+- URL-based major version: `/v1/...`, `/v2/...` when breaking.
+- Additive changes on same major (new fields, new endpoints) do **not** bump.
+- `Sunset` header on deprecated endpoints with date (RFC 8594).
+- Minimum **6-month** overlap between versions; clients notified via dashboard + email.
+- Contract tests (Pact) in CI for critical consumer-producer pairs.
+- Mobile apps negotiate via `X-Client-Version`; gateway may serve shims.
+
+---
+
+## 26. Deployment, CI/CD & SRE Runbooks
+
+### 26.1 Topology
+
+- **Kubernetes** on managed cloud (EKS / GKE) + bare-metal hub edge boxes.
+- Namespaces: `platform-*` (shared), `svc-*` (per microservice), `bff-*`, `data-*`, `ops-*`.
+- **Cells:** each city gets an isolated data-plane cell (own WS cluster, own Redis-geo, own DB read-replicas); control-plane shared.
+- **Service mesh:** Istio with mTLS STRICT, AuthorizationPolicies per service.
+- **Ingress:** Kong at the edge; Envoy sidecars internally.
+- Node pools: `general`, `memory` (cache), `cpu-burst` (ingest), `spot` (batch/ETL).
+- **HPA** on CPU + custom (Kafka lag, WS connections). **PDBs** ≥ 1 for every Deployment. **PodAntiAffinity** across zones.
+
+### 26.2 Environments
+
+| Env | Purpose | Data |
+|-----|---------|------|
+| dev | feature branches | ephemeral, synthetic |
+| staging | pre-prod integ | anonymised prod snapshot (opt-in) |
+| canary | 1% prod traffic | real |
+| prod | full traffic | real |
+| dr | warm standby in second region | replicated |
+
+### 26.3 CI/CD
+
+- **CI:** GitHub Actions / GitLab — lint, unit, integration, container build, SBOM, CVE scan (Trivy), signed image (Cosign/Sigstore).
+- **CD:** ArgoCD GitOps; Helm charts per service; Kustomize overlays per env.
+- **Release strategy:**
+  1. Canary 1% → 5% → 25% → 100% with SLO burn-rate gates (auto-rollback on regression).
+  2. Feature flags gate product changes independent of deploy.
+- **DB migrations:** expand-contract; online; gated by `MIGRATION_SAFE=true` in CI; never destructive in same release as code.
+- **Rollback SLA:** < 10 min to full previous version via ArgoCD.
+
+### 26.4 Secrets & keys
+
+- **Vault** (HashiCorp) or cloud KMS + Secrets Manager. Apps pull via sidecar (no file secrets).
+- **Rotation:** JWT signing 90 d, DB passwords 90 d, API keys (merchant) on-demand, KMS DEKs versioned.
+- **Break-glass:** two-person sealed envelope + Vault root tokens audited.
+
+### 26.5 Load & chaos testing
+
+- **Load:** k6 + Gatling; baseline and peak scenarios per service monthly.
+- Scenarios: Friday-rush ride surge, festival food burst, merchant bulk upload, hub cut-off rush, payment provider slow-down.
+- **Pass/fail:** p99 within NFR, error rate < 0.1%, no DB connection exhaustion.
+- **Chaos:** Litmus/Gremlin; monthly game-day; failure modes: node drain, AZ down, DB failover, Redis eviction, Kafka broker loss, payment provider 500s.
+
+### 26.6 Runbooks (titles)
+
+Every runbook in Git with ownership, on-call escalation, diagnostic queries, mitigation steps.
+
+| ID | Title |
+|----|-------|
+| RB-01 | Payment provider outage — failover to secondary |
+| RB-02 | Dispatch match rate drop / scoring drift |
+| RB-03 | Redis-geo cluster failure (per city) |
+| RB-04 | WS mass-disconnect / reconnect storm |
+| RB-05 | Kafka consumer lag spike |
+| RB-06 | Ledger invariant violation detected |
+| RB-07 | COD drift > 0.1% daily |
+| RB-08 | Hub offline — paper fallback & sync |
+| RB-09 | Map provider quota exhaustion |
+| RB-10 | Surge runaway / price cap breach |
+| RB-11 | OTP provider failure — switch aggregator |
+| RB-12 | KYC vendor outage — grace-period policy |
+| RB-13 | Data-plane region failover |
+| RB-14 | Mass password/token compromise response |
+| RB-15 | Fraud model false-positive spike |
+| RB-16 | Mobile push notification storm |
+
+---
+
+## 27. Integrations & Compliance Matrix
+
+### 27.1 Third-party integrations
+
+| Area | Primary | Secondary | Notes |
+|------|---------|-----------|-------|
+| Payments | bKash, Nagad, Rocket | Stripe / Adyen | Tokenized; 3DS where applicable; settlement file reconciled daily |
+| Cards | Network (Visa/MC) via Adyen | Local PG | PCI-DSS SAQ-A via tokenization |
+| Maps & geocoding | Google Maps | Mapbox, HERE | Per-city failover; client-side + server-side quotas |
+| Routing / ETA | OSRM self-hosted | Valhalla | Mapbox Directions for edge cases |
+| SMS | Twilio | MessageBird, local aggregator | OTP deliverability > 99% target |
+| Voice/IVR | Twilio | Exotel | Masked call proxy |
+| Push | APNs, FCM, HMS | — | HMS required for Huawei markets |
+| Email | SES | SendGrid | DKIM/SPF/DMARC enforced |
+| WhatsApp | Meta Cloud API | 360dialog | Template approval pipeline |
+| KYC (ID + liveness) | Onfido / SumSub | HyperVerge | PEP + sanctions screening |
+| Background checks | Checkr equivalent | Local vendor | 7-day SLA for driver onboarding |
+| Fraud signals | Sift / Forter | Internal | Shadow mode before enforcement |
+| Device attestation | Play Integrity, App Attest | — | Required for driver/hub finance |
+| Analytics | Amplitude / Mixpanel | Internal lake | PII redaction at SDK layer |
+| Crash / RUM | Sentry, Crashlytics | — | Source maps, ProGuard mappings uploaded |
+| CRM / marketing | Braze / CleverTap | — | Governed by consent service |
+| Tax / invoicing | Local tax API | Manual fallback | GST/VAT compliant PDFs |
+| Ad-tech (sponsored) | Internal | — | Budget caps, IAB transparency |
+
+Each integration requires: contract, SLA, credentials in Vault, failover runbook, usage dashboard, cost alert.
+
+### 27.2 Regulatory / compliance matrix (per country)
+
+| Axis | Bangladesh | India | UAE | Generic |
+|------|-----------|-------|-----|---------|
+| Ride-hailing license | BRTA permit | State transport dept | RTA | Local transport regulator |
+| Courier license | Postal regulator | India Post / state | TDRA | National postal/logistics regulator |
+| Payments | Bangladesh Bank PSO/PSP | RBI PA/PG | CBUAE | Local central bank |
+| Data protection | DSA law / DPA draft | DPDP Act 2023 | UAE PDPL | GDPR analogue |
+| Tax | VAT 15% / TIN | GST (CGST/SGST/IGST) | VAT 5% | Local |
+| Driver classification | contractor (default) | contractor / Platform workers code | contractor | Country-specific legal review |
+| Insurance | 3rd-party motor | Motor + passenger | RTA mandated | Commercial motor + rider cover |
+| KYC tier | NID + selfie | Aadhaar + PAN tiered | Emirates ID | Per local FIU |
+| Storage residency | In-country preferred | In-country (sensitive) | In-country | Regional |
+
+### 27.3 Legal registers maintained
+
+- Processor records (Art. 30 GDPR analogue)
+- Sub-processor list (public page)
+- Data Processing Agreements with every processor
+- DPIAs for high-risk flows (driver onboarding, fraud scoring, location history)
+- Breach notification playbook (< 72 h where required)
+- T&C / Privacy / Driver Agreement versioning with re-accept enforcement
+
+### 27.4 Accessibility
+
+- **WCAG 2.1 AA** target for all web panels (Admin, Merchant, Restaurant, public tracking page).
+- Mobile: Dynamic Type, TalkBack/VoiceOver labels, 44x44 dp tap targets, contrast ≥ 4.5:1.
+- Quarterly audit; issues tracked as P1 if blocking.
+
+### 27.5 Content moderation
+
+- Chat / voice notes: automated toxicity + abusive-language filter; human review queue for safety flags.
+- Reviews: auto-reject profanity; owner reply with 1 edit.
+- Menu / store images: provider auto-moderation (NSFW, violence) + human sampling.
+- Appeals process documented; SLA 48 h.
+
+---
+
+## 28. Capacity, Cost & Scale Model
+
+### 28.1 Reference scale (illustrative — first-year plan)
+
+| Metric | Target |
+|--------|--------|
+| MAU (rider) | 10 M |
+| DAU (rider) | 1.2 M |
+| Active drivers (daily) | 120 k |
+| Trips / day (ride) | 900 k |
+| Food orders / day | 500 k |
+| Courier shipments / day | 250 k (peak festival 1 M) |
+| Concurrent WS connections | 400 k peak |
+| Location frames / sec | 60 k sustained, 100 k peak |
+| Payment txns / sec | 400 peak |
+| Hub scans / sec | 1.5 k peak (festival) |
+
+### 28.2 Data growth
+
+| Store | Daily write | 1 y size (est.) |
+|-------|-------------|-----------------|
+| Postgres (trips/orders/shipments partitioned) | 30 GB | 10 TB + indexes |
+| MongoDB (menu, catalog) | 1 GB | 300 GB |
+| Redis geo + session + cache | RAM-sized | 200–500 GB RAM |
+| Cassandra location_history | 400 GB | 60 TB (180 d TTL) |
+| Cassandra chat | 20 GB | 3.5 TB |
+| Elasticsearch | 15 GB | 3 TB hot, roll to warm |
+| S3 (images, docs, scans, exports) | 200 GB | 60 TB |
+| Kafka | ~1 TB retained rolling | — |
+
+### 28.3 Node / pod sizing (rule-of-thumb per cell)
+
+| Service | Replicas | CPU | Mem |
+|---------|---------:|----:|----:|
+| api-gateway (Kong) | 8 | 2 | 2 Gi |
+| bff-rider / driver | 8 / 12 | 1 | 1 Gi |
+| identity | 6 | 1 | 1 Gi |
+| ride | 8 | 2 | 2 Gi |
+| food / courier / hub | 6 each | 2 | 2 Gi |
+| dispatch (Temporal workers) | 20 | 2 | 4 Gi |
+| location-ingest | 12 | 2 | 2 Gi |
+| ws-gateway | 16 | 2 | 4 Gi |
+| payment | 6 | 1 | 2 Gi |
+| ledger | 4 | 2 | 4 Gi |
+| notification | 8 | 1 | 1 Gi |
+| search (ES client) | 4 | 1 | 2 Gi |
+
+Autoscaling: min = 50% peak, max = 200% peak, scale-up aggressive (60 s), scale-down gradual (5 min).
+
+### 28.4 Cost control
+
+- **Per-service monthly budget** with alert at 70% / 90%.
+- Spot/pre-emptible nodes for batch, ETL, ML training (never on critical path).
+- Cache-first API design to reduce DB / 3rd-party cost (maps, SMS).
+- CDN for images, receipts, public tracking pages.
+- Daily FinOps review; showback per team; kill-switch on runaway campaigns.
+- Provider cost caps: maps quota per city/day, SMS spend per campaign, push fan-out per user.
+
+### 28.5 Headroom
+
+- All clusters provisioned at **2×** current peak; horizontal scale rehearsed quarterly.
+- DB sharding plan drafted (by city then by user-id range) — activated when single-region write load > 60% ceiling.
+
+---
+
+## 29. Panel Design Diagrams
+
+One diagram per panel, each showing: **(A)** user screens/flows, **(B)** what the panel calls in the backend, **(C)** which data stores and events are touched, **(D)** who it talks to in real time.
+
+Legend used in every diagram:
+```
+[UI]         = app / tablet / web screen
+(API)        = REST endpoint hit
+<WS>         = WebSocket channel
+{{Service}}  = microservice
+[[Store]]    = database / cache
+«Kafka»      = event topic
+→            = synchronous call
+⇝            = async / event
+```
+
+---
+
+### 29.1 🧑 Rider Panel — how it works
+
+**Who:** passengers / food buyers / parcel senders. **Device:** mobile app.
+**Mental model:** "I open the app → pick a service → book → watch it happen live → pay → rate."
+
+```
+┌──────────────────────────────  RIDER APP (iOS / Android)  ────────────────────────────┐
+│                                                                                         │
+│  [Home]──[Search/Discover]──[Cart]──[Checkout]──[Live Track]──[Rate/Pay]──[History]    │
+│     │         │               │        │             │           │         │        │
+│     │ services tabs                                                                   │
+│     ├── 🚗 Ride   → (POST /rides/estimate) → (POST /rides)                            │
+│     ├── 🍴 Food   → (GET /food/stores) → (POST /food/orders)                           │
+│     ├── 📦 Parcel → (POST /parcels/quote) → (POST /parcels)                            │
+│     └── 🚚 Courier→ (POST /courier/quote) → (POST /courier/shipments)                 │
+│                                                                                         │
+│   Live tracking:  <WS trip.{id}> | <WS order.{id}> | <WS shipment.{awb}>                │
+│   Safety:         [SOS] → (POST /safety/sos) ⇝ «sos.events»                             │
+│   Wallet/Pay:     (POST /payments/intents) → provider 3DS → capture                    │
+└───────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                          │ HTTPS + WSS (ticket auth)
+                                          ▼
+                         ┌─────────────────────────────────┐
+                         │   API Gateway ───── bff-rider  │
+                         └──────────┬──────────────┬─────────┘
+                                    │                │
+       ┌─────────────┬────────────┴─────────────────┴──────────────────────┐
+       ▼             ▼                 ▼                  ▼                        ▼
+  {{Identity}}   {{Ride}}→«ride.*»   {{Food}}→«food.*»   {{Courier}}→«courier.*»     {{Payment}}
+                 ↓                   ↓                   ↓                        ↓
+            {{Dispatch}}          {{Restaurant}}        {{Hub}}                {{Wallet/Ledger}}
+                 ↓                   ↓                   ↓                        ↓
+            [[Redis-geo]]         [[Mongo menu]]     [[PG courier_*]]           [[PG ledger]]
+            [[PG trips]]                                                       + {{Fraud}}
+```
+
+**Happy path — request a ride:**
+1. Rider picks pickup + drop → app calls `POST /rides/estimate` → gets price & ETA.
+2. Rider confirms → `POST /rides` with `Idempotency-Key` → `Ride Service` writes `trips` row, emits `ride.requested`.
+3. `Dispatch` reads Redis-geo, scores drivers, offers the best one (see §23.1).
+4. Rider app opens `<WS trip.{id}>`; receives `trip.matched` then `trip.driver_location` every 2 s.
+5. Trip ends → `Payment` captures prepaid or driver collects cash → `Ledger` posts → rider rates.
+
+---
+
+### 29.2 🚗 Driver Panel — how it works
+
+**Who:** bike / auto / car / truck drivers. **Device:** mobile app (device-bound).
+**Mental model:** "I go online → I get an offer → I accept → I navigate & deliver → I get paid."
+
+```
+┌─────────────────────────────  DRIVER APP (device-attested)  ────────────────────────┐
+│                                                                                         │
+│  [Onboarding/KYC]──[Online toggle]──[Heatmap]──[Offer popup]                           │
+│           │                │             │            │ accept/reject (8s)            │
+│           │                │             │            ▼                               │
+│           │                │             │     [Nav → Arrived → Start → End]            │
+│           │                │             │            │                               │
+│           │                │             │     [Collect cash? OTP? Photo proof?]        │
+│           │                │             │            │                               │
+│           │                │             │     [Earnings → Payouts → Ratings]          │
+│                                                                                         │
+│  (POST /driver/status)  → online/offline                                                │
+│  <WS location> @ 1 frame / 2 s  → ingest → «location.driver.updates.<city>»             │
+│  <WS offers>   → "offer" frame (TTL 8 s) → (POST /driver/offers/{id}/accept)            │
+│  (POST /driver/trips/{id}/{arrived|start|complete|cancel|collect-cash})                 │
+│  Courier:  /driver/courier/first-mile/{awb}/pickup + /last-mile/{awb}/deliver           │
+└───────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼  API Gateway ─── bff-driver
+        ┌─────────────────────────────────────────────────────────────────┐
+        │                                                                               │
+        ▼                  ▼                 ▼                    ▼                    ▼
+   {{Location          {{Dispatch}}        {{Ride/Food        {{Courier}}           {{Payout}}
+     Ingest}}              ↓               /Parcel}}              ↓                    ↓
+        ↓             [[Redis-geo]]            ↓           {{Hub}} handover      {{Ledger}}
+  [[Cassandra          [[PG trips]]        «ride.completed»   [[PG shipments]]
+  location_history]]                                          [[PG scans]]
+```
+
+**Happy path — accept & run a ride:**
+1. Driver goes online → `POST /driver/status` → added to `redis-geo-<city>`.
+2. App opens `<WS>` and starts streaming location frames.
+3. Dispatch scores & sends an offer → driver accepts within 8 s.
+4. App walks through Arrived → Start → End; fare meter + location updates go to rider WS.
+5. If cash: driver taps **Collect cash** → ledger posts cash → driver.float.
+6. Daily/weekly earnings aggregated; auto payout on Monday.
+
+---
+
+### 29.3 🍴 Restaurant Panel — how it works
+
+**Who:** restaurant owner + kitchen staff. **Device:** tablet with KDS + web for owner.
+**Mental model:** "Order lands → I accept with prep time → I cook → I mark ready → driver picks up."
+
+```
+┌───────────────────────────  RESTAURANT PANEL  ──────────────────────────────────┐
+│                                                                                         │
+│   KDS (tablet)                              Web console (owner)                         │
+│  ┌─────────────────────────────────┐    ┌───────────────────────────────┐           │
+│  │ New order 🔔 (60-s accept window) │    │ Menu CRUD / 86-list / stock │           │
+│  │  ├ Accept  → prep_time_min       │    │ Outlets / hours / holidays  │           │
+│  │  ├ Reject  → reason              │    │ Promos / sponsored ads      │           │
+│  │  └ Ready   → notifies dispatch   │    │ Analytics / payouts         │           │
+│  └─────────────────────────────────┘    └───────────────────────────────┘           │
+│       │ <WS outlet.{outlet_id}>                                                          │
+│       └─ order.new / order.cancelled_by_customer                                        │
+│                                                                                         │
+│  (POST /restaurant/orders/{id}/accept | reject | ready)                                 │
+│  (POST /restaurant/menu/items, PATCH /{id})  (POST /restaurant/promos)                   │
+│  (POST /restaurant/outlets/{id}/toggle-open)   auto-print ESC/POS receipt               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+         │
+         ▼   API Gateway ─── bff-restaurant
+  ┌────────────────────────────────────────────────────────────────────┐
+  │  {{Restaurant}}     {{Food}}    {{Dispatch}}   {{Search/ES}}   {{Ads}}          │
+  │        │                 │            │              │             │          │
+  │   [[PG restaurants]]  «food.*»   offers drivers   index:stores   budget cap   │
+  │   [[Mongo menu]]                                                               │
+  └────────────────────────────────────────────────────────────────────┘
+```
+
+**Happy path — accept an order:**
+1. Customer places order → `food.order.placed` → outlet's KDS receives `order.new` on WS with sound/vibration.
+2. Staff taps **Accept**, enters prep time (e.g. 25 min) → dispatch times driver arrival for pickup.
+3. On "Ready" → driver notified → picks up → delivered → payout added to weekly statement.
+
+---
+
+### 29.4 🏪 Merchant Panel — how it works
+
+**Who:** retailers, e-commerce sellers, bulk shippers. **Device:** web dashboard + REST API.
+**Mental model:** "I print labels for my orders, a rider picks them up, they arrive, COD money comes back."
+
+```
+┌─────────────────────────────  MERCHANT PANEL (Web + API)  ───────────────────────────┐
+│                                                                                         │
+│  [Dashboard]   [Shipments]   [Bulk Upload CSV]   [COD Reports]   [Payouts]   [API Keys] │
+│      │             │                │                  │             │          │    │
+│  Book single:   Async batch:        Track:             Remittance:      Weekly:         │
+│  (POST /merchant/shipments)         (GET /merchant/shipments/{awb})    (GET /payouts)   │
+│  (POST /merchant/shipments/bulk) → batch_id → (GET /bulk/{id})                          │
+│  (GET  /merchant/shipments/{awb}/label) → PDF (A5/A6, QR)                                │
+│                                                                                         │
+│  Integrations:  Shopify / WooCommerce / Magento plugins (OAuth)                         │
+│  Webhooks to merchant URL:  shipment.created / picked_up / delivered / exception / rto  │
+│                 (HMAC-signed; retry 1m,5m,30m,2h,12h,24h × 3 → DLQ)                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+      │  Bearer JWT  /  API key (IP allow-list)
+      ▼
+   API Gateway ─── bff-merchant
+      │
+      ├─▶ {{Courier}} ──├─▶ {{Pricing}} (rate card + slab)
+      │                ├─▶ [[PG courier_shipments]] + awb_index
+      │                └⇝ «courier.shipment.created»
+      ├─▶ {{Hub}}     ── pickup assignment / first-mile
+      ├─▶ {{Payment/Ledger}} ── COD remittance + weekly payout
+      └─▶ {{Webhook-dispatcher}} ⇝ merchant URL (signed)
+
+Lifecycle a merchant sees:
+  created → picked_up → at_origin_hub → in_transit → at_dest_hub
+         → out_for_delivery → delivered (COD?)  → settled / paid out
+```
+
+**Happy path — e-commerce seller with 50 orders:**
+1. Seller uploads CSV → `POST /merchant/shipments/bulk` → batch_id.
+2. Async worker creates 50 shipments, emits `courier.shipment.created × 50`, generates AWBs.
+3. Seller downloads bulk label PDF, sticks on parcels, schedules pickup.
+4. First-mile driver picks up → hub scan-in → line-haul → delivery.
+5. Webhooks fire at each milestone; COD collected → merchant weekly payout.
+
+---
+
+### 29.5 🏭 Hub Panel — how it works
+
+**Who:** hub clerk, supervisor, finance, manager. **Device:** rugged tablet with scanner + web console.
+**Mental model:** "Parcels come in → I scan → I sort → I manifest them onto a truck → they arrive at dest hub → last-mile rider delivers → cash comes back → I deposit."
+
+```
+┌──────────────────────────  HUB PANEL (tablet + web)  ───────────────────────────────┐
+│ Login (email + MFA)  |  Role: clerk | supervisor | finance | manager                   │
+│                                                                                         │
+│   CLERK                SUPERVISOR                 FINANCE (MFA+device)                 │
+│  [Scan-in bag] ▶   [Create manifest]          [Close driver COD bag]                   │
+│  [Sort to cage] ▶   [Add AWBs to manifest]    [Record bank deposit]                    │
+│  [Hand over to LM] ▶ [Dispatch (seal #)]       [Reconcile vs slip]                     │
+│  [File exception]    [Receive inbound truck]    [View hub float]                        │
+│       📏 damage photo  [Reconcile manifest]                                              │
+│                                                                                         │
+│ Offline-first:  scans queue in IndexedDB → flush (POST /hub/scans/bulk)                 │
+│                                                                                         │
+│ Real-time channel <WS hub.{hub_id}>:                                                    │
+│   manifest.incoming  •  sla.breach  •  exception.flagged                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                │  API Gateway ── bff-hub
+                ▼
+          {{Hub Service}} ── {{Courier}} ── {{COD/Remittance}} ── {{Ledger}}
+                │                                   │
+          [[PG scans (partitioned)]]           [[PG cod_collections]]
+          [[PG manifests]]                     [[PG ledger_entries]]
+          ⇝ «courier.scan.recorded»           ⇝ «remittance.*»
+          ⇝ «courier.manifest.dispatched»
+          ⇝ «courier.manifest.received»
+
+Physical ↔ digital mapping:
+  [TRUCK+MANIFEST+SEAL]  ↔  manifests row (open → dispatched → received → reconciled)
+  [BAG QR]               ↔  bag_id linking many AWBs (1-scan handover)
+  [CAGE #17]             ↔  sort-code on label + cage/location map
+  [CCTV cam-08 @ 09:13]  ↔  scan.cctv_ref on every scan (for disputes)
+```
+
+**Happy path — a shipment transits Dhaka → Chattogram:**
+1. First-mile driver hands bag to clerk → clerk scans AWBs (`scan_type=hub_inbound`).
+2. Sort step: label's sort-code maps to cage for DAC→CTG line-haul.
+3. Supervisor creates manifest, attaches AWBs, records truck + seal, dispatches.
+4. Destination hub receives truck, scans seal + each AWB; mismatches → exception.
+5. Last-mile rider takes handover scan → delivers → returns cash → finance closes bag → hub deposits to bank (ledger entries at every step).
+
+---
+
+### 29.6 👨‍💼 Admin Panel — how it works
+
+**Who:** operations, finance, safety, support, compliance. **Device:** web, VPN + MFA.
+**Mental model:** "I see everything live, I approve/block, I tune pricing and rules, I resolve disputes, I run the business."
+
+```
+┌─────────────────────────────  ADMIN PANEL (Web, VPN, WebAuthn)  ─────────────────────┐
+│                                                                                         │
+│  [Dashboard / Live Ops Map]    [KYC queues]         [Fraud signals]                    │
+│   • active drivers/trips        • Driver / Rest./   • velocity / device / GPS          │
+│   • SLA & hub capacity           Merchant / Hub-staff • rules + ML shadow/enforced      │
+│   • SOS alerts 🚨                                                                         │
+│                                                                                         │
+│  [Pricing & Zones]   [Promos]    [Support inbox]     [Disputes / Refunds]              │
+│   • fares/surge/lanes   % / flat   • tickets P0–P3     • 4-eyes above threshold          │
+│   • geofence editor     • segmented • 360° user view    • ledger reversal                │
+│                                                                                         │
+│  [Reports / Exports]  [Config]     [Staff RBAC]    [Audit Log]    [Feature Flags / A/B]│
+│                                                                                         │
+│  Real-time <WS ops.global / ops.{city}>:  live map, fraud alerts, SOS                   │
+│  All writes audited: audit_log (append-only, signed, 7-y retention)                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+     │   API Gateway ── bff-admin  (role-scoped; city-scoped where applicable)
+     ▼
+ ┌─────────────────────────────────────────────────────────────────────────┐
+ │ Read-only fan-out across ALL services to compose 360° views:                            │
+ │ {{Identity}} {{Ride}} {{Food}} {{Courier}} {{Hub}} {{Payment/Ledger}} {{Fraud}} ...    │
+ │                                                                                        │
+ │ Writes are narrow & audited:                                                           │
+ │  • KYC approve/reject    →  {{Identity}} / {{Driver}} / {{Merchant}} / {{Restaurant}}   │
+ │  • Suspend / unblock    →  target service + audit                                      │
+ │  • Refund / wallet adj. →  {{Ledger}} (idempotent reversal, 4-eyes > threshold)         │
+ │  • Pricing / surge      →  {{Config/Pricing}} (versioned, effective_from)                │
+ │  • Feature flags        →  {{Config}} (per-city / cohort)                                │
+ └─────────────────────────────────────────────────────────────────────────┘
+
+Every admin write emits «audit.events» → compacted topic → lake, 7-year retention.
+```
+
+**Happy path — approve a new driver:**
+1. Ops opens KYC queue → reviews docs + background check result → **Approve**.
+2. Admin API calls `{{Driver}}` to flip status; change logged in `audit_log` with actor, IP, reason.
+3. Driver receives push notification; can now go online in their app.
+
+**Another path — city surge runaway:**
+1. Alert on dashboard: surge > 2.5x for > 30 min in a zone.
+2. Ops opens **Pricing** → applies **Surge override** (temporary cap) with expiry 60 min.
+3. Config versioned; pricing engine picks up at next 60-s tick; audit log records the change.
+
+---
+
+### 29.7 Cross-panel interaction map (one picture)
+
+So everyone can see who talks to whom at runtime:
+
+```
+  🧑 Rider          🚗 Driver         🍴 Restaurant      🏪 Merchant      🏭 Hub         👨‍💼 Admin
+     │                 │                 │                │              │               │
+     │ request ride    │                 │                │              │               │
+     ───────────────▶ offered ─────▶                 │              │               │
+     │                 │                 │                │              │               │
+     │ order food ──────────────────────────▶ accept + prep ───────────────────────────▶
+     │                 │                 │ ready          │              │               │
+     │                 ◀─ pickup offer ──┤                │              │               │
+     │ delivered ◀─────┤                 │                │              │               │
+     │                 │                 │                │              │               │
+     │                 │                 │  bulk label ───▶ PDF         │               │
+     │                 ◀─ first-mile  ─────────────────◀ pickup    ─▶ scan-in      │
+     │                 │                 │                │              ├─ manifest     │
+     │                 │                 │                │              │   line-haul   │
+     │                 ◀─ last-mile ───────────────────────────◀ handover    │
+     │ delivered + COD → ledger ────────────────▶ payout    ◀ cash close  ─▶ KPIs         │
+     │                 │                 │                │              │               │
+     └───────────────── support ticket ticket ───────────────────────────────▶ resolve
+                        │                                                        │
+                        └─ doc expiry / fraud signal / SLA breach ──────────────▶ action
+
+Everything passes through: API Gateway → BFF → Service → (DB | Cache | Kafka event).
+```
+
+---
+
 ## 📂 Related Design Files
 
 The granular multi-phase design package lives in [super_app_design/](super_app_design/):
@@ -1130,4 +2236,4 @@ The granular multi-phase design package lives in [super_app_design/](super_app_d
 
 ---
 
-*Document version: 1.0 — April 21, 2026*
+*Document version: 1.3 — April 21, 2026 — added §29 Panel Design Diagrams: one ASCII diagram per panel (Rider, Driver, Restaurant, Merchant, Hub, Admin) showing screens, API calls, services, stores, events and real-time channels, plus a cross-panel interaction map.*
