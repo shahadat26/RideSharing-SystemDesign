@@ -135,6 +135,95 @@ CREATE INDEX idx_stores_geog ON stores USING GIST (geog);
 CREATE INDEX idx_stores_open ON stores(is_open) WHERE is_open;
 ```
 
+### 2.3b Restaurants (Food vertical)
+
+Distinct from generic `merchants`/`stores`: food-vertical specific fields (FSSAI, KDS device, avg prep variance).
+
+```sql
+CREATE TABLE restaurants (
+    restaurant_id    UUID PRIMARY KEY,
+    owner_user_id    UUID REFERENCES users(user_id),
+    legal_name       VARCHAR(160) NOT NULL,
+    brand_name       VARCHAR(160) NOT NULL,
+    fssai_no_enc     BYTEA,                 -- encrypted
+    tax_id_enc       BYTEA,
+    kyc_status       VARCHAR(20) DEFAULT 'pending',
+    commission_pct   NUMERIC(5,2) DEFAULT 20.00,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE restaurant_outlets (
+    outlet_id        UUID PRIMARY KEY,
+    restaurant_id    UUID NOT NULL REFERENCES restaurants(restaurant_id) ON DELETE CASCADE,
+    name             VARCHAR(160) NOT NULL,
+    city_id          INTEGER NOT NULL,
+    lat              DOUBLE PRECISION NOT NULL,
+    lng              DOUBLE PRECISION NOT NULL,
+    geog             GEOGRAPHY(POINT,4326) GENERATED ALWAYS AS (ST_MakePoint(lng,lat)::geography) STORED,
+    is_open          BOOLEAN DEFAULT FALSE,
+    prep_time_min    INTEGER DEFAULT 20,
+    avg_prep_variance_min INTEGER DEFAULT 5,
+    rating_avg       NUMERIC(3,2) DEFAULT 0,
+    kds_device_id    VARCHAR(64),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_outlets_restaurant ON restaurant_outlets(restaurant_id);
+CREATE INDEX idx_outlets_geog       ON restaurant_outlets USING GIST (geog);
+CREATE INDEX idx_outlets_open       ON restaurant_outlets(is_open) WHERE is_open;
+
+CREATE TABLE restaurant_hours (
+    outlet_id   UUID REFERENCES restaurant_outlets(outlet_id) ON DELETE CASCADE,
+    dow         SMALLINT NOT NULL,    -- 0..6 (Sun..Sat)
+    open_time   TIME NOT NULL,
+    close_time  TIME NOT NULL,
+    PRIMARY KEY (outlet_id, dow, open_time)
+);
+```
+
+### 2.3c Hubs (Courier network)
+
+```sql
+CREATE TABLE hubs (
+    hub_id           UUID PRIMARY KEY,
+    code             VARCHAR(10) UNIQUE NOT NULL,   -- e.g. DAC01, CXB02
+    name             VARCHAR(120) NOT NULL,
+    hub_type         VARCHAR(20) NOT NULL,          -- origin|sort|destination|transit
+    city_id          INTEGER NOT NULL,
+    address          TEXT NOT NULL,
+    lat              DOUBLE PRECISION NOT NULL,
+    lng              DOUBLE PRECISION NOT NULL,
+    geog             GEOGRAPHY(POINT,4326) GENERATED ALWAYS AS (ST_MakePoint(lng,lat)::geography) STORED,
+    daily_capacity   INTEGER NOT NULL,
+    cutoff_time      TIME NOT NULL,                 -- same-day dispatch cutoff
+    is_active        BOOLEAN DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_hubs_city ON hubs(city_id) WHERE is_active;
+CREATE INDEX idx_hubs_geog ON hubs USING GIST (geog);
+
+CREATE TABLE hub_staff (
+    staff_id     UUID PRIMARY KEY REFERENCES users(user_id),
+    hub_id       UUID NOT NULL REFERENCES hubs(hub_id),
+    role         VARCHAR(30) NOT NULL,   -- clerk|supervisor|finance|manager
+    assigned_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (staff_id, hub_id)
+);
+CREATE INDEX idx_hub_staff_hub ON hub_staff(hub_id, role);
+
+-- Hub-to-hub lane rate card (for merchant contracts and SLA)
+CREATE TABLE courier_lanes (
+    origin_hub_id   UUID NOT NULL REFERENCES hubs(hub_id),
+    dest_hub_id     UUID NOT NULL REFERENCES hubs(hub_id),
+    sla_std_hours   INTEGER NOT NULL,
+    sla_express_hours INTEGER,
+    rate_per_kg     NUMERIC(10,2) NOT NULL,
+    min_charge      NUMERIC(10,2) NOT NULL,
+    currency        CHAR(3) NOT NULL DEFAULT 'BDT',
+    active          BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (origin_hub_id, dest_hub_id)
+);
+```
+
 ### 2.4 Trips (Ride / Parcel)
 
 Partitioned monthly by `created_at` (declarative partitioning).
@@ -212,6 +301,137 @@ CREATE TABLE food_order_items (
     FOREIGN KEY (order_id, order_created_at) REFERENCES food_orders(order_id, created_at)
 );
 CREATE INDEX idx_food_items_order ON food_order_items(order_id);
+```
+
+### 2.5b Courier Shipments (Country-wide, multi-leg)
+
+Partitioned monthly by `created_at`. Customer-visible identifier is `awb_no` (Air-Waybill).
+
+```sql
+CREATE TABLE courier_shipments (
+    shipment_id      UUID NOT NULL,
+    awb_no           VARCHAR(16) NOT NULL,                 -- customer-visible tracking no.
+    booker_type      VARCHAR(10) NOT NULL,                 -- rider|merchant
+    booker_id        UUID NOT NULL,
+    origin_hub_id    UUID NOT NULL,                        -- FK hubs
+    dest_hub_id      UUID NOT NULL,
+    service_tier     VARCHAR(16) NOT NULL,                 -- standard|express|same_day
+    weight_kg        NUMERIC(8,3) NOT NULL,
+    declared_value   NUMERIC(12,2),
+    is_cod           BOOLEAN NOT NULL DEFAULT FALSE,
+    cod_amount       NUMERIC(12,2) DEFAULT 0,
+    cod_currency     CHAR(3),
+    sender_name      VARCHAR(120) NOT NULL,
+    sender_phone_enc BYTEA NOT NULL,
+    sender_address   TEXT NOT NULL,
+    sender_geog      GEOGRAPHY(POINT,4326),
+    recipient_name   VARCHAR(120) NOT NULL,
+    recipient_phone_enc BYTEA NOT NULL,
+    recipient_address TEXT NOT NULL,
+    recipient_geog   GEOGRAPHY(POINT,4326),
+    status           VARCHAR(24) NOT NULL,
+        -- created|picked_up|at_origin_hub|in_transit|at_dest_hub|
+        -- out_for_delivery|delivered|rto_initiated|rto_delivered|cancelled|exception
+    sla_deadline     TIMESTAMPTZ,
+    price_amount     NUMERIC(12,2) NOT NULL,
+    price_currency   CHAR(3) NOT NULL DEFAULT 'BDT',
+    payment_id       UUID,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    delivered_at     TIMESTAMPTZ,
+    PRIMARY KEY (shipment_id, created_at),
+    UNIQUE (awb_no, created_at)
+) PARTITION BY RANGE (created_at);
+
+CREATE INDEX idx_courier_awb          ON courier_shipments(awb_no);
+CREATE INDEX idx_courier_booker       ON courier_shipments(booker_type, booker_id, created_at DESC);
+CREATE INDEX idx_courier_origin_status ON courier_shipments(origin_hub_id, status);
+CREATE INDEX idx_courier_dest_status   ON courier_shipments(dest_hub_id, status);
+CREATE INDEX idx_courier_sla          ON courier_shipments(sla_deadline)
+    WHERE status NOT IN ('delivered','cancelled','rto_delivered');
+
+-- Legs of a shipment (first-mile, line-haul, last-mile) + any reattempts
+CREATE TABLE shipment_legs (
+    leg_id           UUID PRIMARY KEY,
+    shipment_id      UUID NOT NULL,
+    shipment_created_at TIMESTAMPTZ NOT NULL,
+    leg_seq          SMALLINT NOT NULL,          -- 1,2,3,...
+    leg_type         VARCHAR(16) NOT NULL,       -- first_mile|line_haul|last_mile|reattempt
+    driver_id        UUID,
+    vehicle_id       UUID,
+    from_hub_id      UUID,
+    to_hub_id        UUID,
+    manifest_id      UUID,                       -- for line_haul
+    status           VARCHAR(20) NOT NULL,       -- assigned|in_progress|completed|failed
+    started_at       TIMESTAMPTZ,
+    completed_at     TIMESTAMPTZ,
+    FOREIGN KEY (shipment_id, shipment_created_at)
+        REFERENCES courier_shipments(shipment_id, created_at)
+);
+CREATE INDEX idx_legs_shipment ON shipment_legs(shipment_id);
+CREATE INDEX idx_legs_driver   ON shipment_legs(driver_id) WHERE status IN ('assigned','in_progress');
+CREATE INDEX idx_legs_manifest ON shipment_legs(manifest_id) WHERE manifest_id IS NOT NULL;
+
+-- Line-haul manifest: many shipments travel together hub-to-hub
+CREATE TABLE courier_manifests (
+    manifest_id      UUID PRIMARY KEY,
+    manifest_no      VARCHAR(20) UNIQUE NOT NULL,
+    origin_hub_id    UUID NOT NULL,
+    dest_hub_id      UUID NOT NULL,
+    vehicle_id       UUID,
+    driver_id        UUID,
+    seal_no          VARCHAR(40),
+    status           VARCHAR(20) NOT NULL,       -- open|dispatched|in_transit|received|reconciled
+    total_awb_count  INTEGER DEFAULT 0,
+    total_weight_kg  NUMERIC(10,3) DEFAULT 0,
+    dispatched_at    TIMESTAMPTZ,
+    received_at      TIMESTAMPTZ,
+    reconciled_at    TIMESTAMPTZ,
+    created_by_staff UUID NOT NULL,              -- hub_staff.staff_id
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_manifests_origin ON courier_manifests(origin_hub_id, status);
+CREATE INDEX idx_manifests_dest   ON courier_manifests(dest_hub_id, status);
+
+-- Every scan / exception event → append-only
+CREATE TABLE shipment_scans (
+    scan_id          UUID PRIMARY KEY,
+    shipment_id      UUID NOT NULL,
+    awb_no           VARCHAR(16) NOT NULL,
+    hub_id           UUID,
+    staff_id         UUID,
+    driver_id        UUID,
+    scan_type        VARCHAR(24) NOT NULL,
+        -- pickup|hub_inbound|sorted|manifest_out|manifest_in|
+        -- out_for_delivery|delivered|exception|rto_initiated
+    exception_code   VARCHAR(40),
+    notes            TEXT,
+    geog             GEOGRAPHY(POINT,4326),
+    proof_url        TEXT,                        -- S3 path for photo/signature
+    scanned_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Idempotency guard against offline replay
+    UNIQUE (awb_no, hub_id, scan_type, scanned_at)
+);
+CREATE INDEX idx_scans_awb  ON shipment_scans(awb_no, scanned_at DESC);
+CREATE INDEX idx_scans_hub  ON shipment_scans(hub_id, scan_type, scanned_at DESC);
+CREATE INDEX idx_scans_excp ON shipment_scans(exception_code) WHERE exception_code IS NOT NULL;
+
+-- COD collection state (one row per shipment with COD)
+CREATE TABLE cod_collections (
+    shipment_id     UUID PRIMARY KEY,
+    awb_no          VARCHAR(16) NOT NULL,
+    amount          NUMERIC(12,2) NOT NULL,
+    currency        CHAR(3) NOT NULL,
+    driver_id       UUID,
+    collected_at    TIMESTAMPTZ,
+    bag_closed_at   TIMESTAMPTZ,
+    deposited_hub_id UUID,
+    deposited_at    TIMESTAMPTZ,
+    merchant_payout_txn UUID,              -- references ledger txn_id
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending'
+        -- pending|collected|at_hub|deposited|settled|disputed
+);
+CREATE INDEX idx_cod_status ON cod_collections(status);
+CREATE INDEX idx_cod_driver ON cod_collections(driver_id) WHERE status IN ('collected','at_hub');
 ```
 
 ### 2.6 Payments (Double-Entry Ledger)

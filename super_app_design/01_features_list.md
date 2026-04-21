@@ -1,17 +1,30 @@
 # 01 — Features List (Product Architect Agent)
 
-**Product:** Super App (Ride Sharing + Food Delivery + Parcel/Courier)
+**Product:** Super App (Ride Sharing + Food Delivery + Parcel City + Courier Country)
 **Inspiration:** Pathao / Uber / Grab
 **Author:** Senior Product Architect
 
 ---
 
-## 1. User Roles
+## 1. User Roles (Six Panels)
 
-1. **Customer** — books rides, orders food, sends parcels.
-2. **Driver / Rider** — fulfills rides, food deliveries, parcel deliveries (modes may be separate: Car, Bike, Truck).
-3. **Merchant (Restaurant / Store Owner)** — manages menu/inventory and accepts/rejects orders.
-4. **Admin / Operations** — platform governance, KYC, fraud, dispute resolution, pricing, analytics.
+| # | Panel | Actor | Scope |
+|---|-------|-------|-------|
+| 1 | **Rider App** | Customer (passenger / food buyer / parcel sender) | Books rides, orders food, sends intra-city parcels, ships inter-city courier |
+| 2 | **Driver App** | Driver / Rider (Car, Bike, Auto, Truck) | Fulfills rides, food deliveries, intra-city parcels, and first-/last-mile courier legs |
+| 3 | **Restaurant Panel** | Restaurant/kitchen operator | Menu, live order KDS, prep-time, payouts |
+| 4 | **Merchant Panel** | Non-food seller / shop owner | Storefront catalog, bulk parcel & courier shipments, payouts |
+| 5 | **Hub Panel** | Courier hub / warehouse staff | Scan-in/out, sort, manifest, line-haul dispatch, country-wide courier routing |
+| 6 | **Admin Dashboard** | Operations / Finance / Safety / Support | KYC, fraud, pricing, disputes, analytics, staff RBAC |
+
+### 1.1 Service Types
+
+| Service | Scope | Typical vehicle | Owner panels involved |
+|---------|-------|-----------------|-----------------------|
+| **Ride** | Intra-city | Bike, Auto, Sedan, SUV | Rider, Driver, Admin |
+| **Food Delivery** | Intra-city | Bike | Rider, Restaurant, Driver, Admin |
+| **Parcel (City)** | Intra-city point-to-point | Bike, Car | Rider, Merchant, Driver, Admin |
+| **Courier (Country)** | Inter-city, multi-leg, hub-routed | Bike (pickup/last-mile) + Truck (line-haul) | Rider/Merchant, Driver, Hub, Admin |
 
 ---
 
@@ -36,8 +49,10 @@ Legend: ✅ MVP · 🟡 V2 · 🔒 Compliance/Trust
 | C11 | SOS / emergency button | ✅ | 🔒 Safety |
 | C12 | Food: browse restaurants, search, filter | ✅ | |
 | C13 | Food: cart, checkout, live order status | ✅ | |
-| C14 | Parcel: send package with pickup/drop | ✅ | Size/weight tiers |
-| C15 | Promo codes & referrals | ✅ | |
+| C14 | Parcel (city): send package intra-city with pickup/drop | ✅ | Size/weight tiers |
+| C15 | Courier (country): inter-city shipment with hub routing | ✅ | AWB/tracking no., SLA tiers (Std/Express) |
+| C16 | COD (Cash-on-Delivery) option for parcel/courier | ✅ | 🔒 Cash reconciliation |
+| C17 | Promo codes & referrals | ✅ | |
 | C16 | Schedule a ride | 🟡 | |
 | C17 | Multi-stop ride | 🟡 | |
 | C18 | Subscription / pass (Uber One-style) | 🟡 | |
@@ -58,41 +73,82 @@ Legend: ✅ MVP · 🟡 V2 · 🔒 Compliance/Trust
 | D6 | Instant payout to bank/MFS | ✅ | Configurable |
 | D7 | Heatmap of demand | ✅ | |
 | D8 | In-app chat/call with customer | ✅ | Masked |
-| D9 | Accept multi-service (ride + food + parcel) | ✅ | Per driver capability |
-| D10 | Document expiry reminders | ✅ | |
+| D9 | Accept multi-service (ride + food + parcel + courier first/last mile) | ✅ | Per driver capability |
+| D10 | Courier line-haul mode (truck driver, hub-to-hub manifest scan) | ✅ | Separate role flag |
+| D11 | COD collection + end-of-day remittance at hub/office | ✅ | 🔒 |
+| D12 | Document expiry reminders | ✅ | |
 | D11 | Incentives / quest tracker | 🟡 | |
 | D12 | Driver tiers & priority dispatch | 🟡 | |
 | D13 | Training modules | 🟡 | |
 
-### 2.3 Merchant (Restaurant / Store)
+### 2.3 Restaurant Panel (Food vertical)
 
 | # | Feature | Priority | Notes |
 |---|---------|----------|-------|
-| M1 | Merchant onboarding + KYC | ✅ | 🔒 |
-| M2 | Menu/inventory CRUD + item availability toggle | ✅ | |
-| M3 | Incoming order dashboard (tablet app) | ✅ | |
-| M4 | Accept/reject + prep-time update | ✅ | |
-| M5 | Auto-print receipt | ✅ | |
-| M6 | Daily payout report | ✅ | |
-| M7 | Promotions/coupons self-service | 🟡 | |
-| M8 | Analytics (top items, peak hours) | 🟡 | |
-| M9 | Loyalty/sub-brand pages | 🟡 | |
+| R1 | Restaurant onboarding + KYC (trade license, FSSAI/food permit, tax ID) | ✅ | 🔒 |
+| R2 | Menu / modifier / combo CRUD + item availability toggle | ✅ | |
+| R3 | Kitchen Display System (KDS) tablet app with sound alerts | ✅ | |
+| R4 | Accept/reject + live prep-time update | ✅ | |
+| R5 | Auto-print receipt (ESC/POS printer) | ✅ | |
+| R6 | Live order status broadcast to customer | ✅ | |
+| R7 | Daily payout report + commission statement | ✅ | |
+| R8 | Self-service discounts / combos / happy-hour | 🟡 | |
+| R9 | Analytics (top items, peak hours, rejection reasons) | 🟡 | |
+| R10 | Multi-outlet management under one brand | 🟡 | |
+| R11 | Ingredient-level stock sync | 🟡 | |
 
-### 2.4 Admin / Ops
+### 2.4 Merchant Panel (Parcel / Courier / Non-food retail)
 
 | # | Feature | Priority | Notes |
 |---|---------|----------|-------|
-| A1 | User/driver/merchant CRUD + suspend | ✅ | |
-| A2 | KYC approval queue | ✅ | 🔒 |
-| A3 | Live ops map (active drivers/orders) | ✅ | |
+| MC1 | Merchant onboarding + KYC (trade license, tax ID, GSTIN) | ✅ | 🔒 |
+| MC2 | Storefront / catalog CRUD for retail items | ✅ | |
+| MC3 | Bulk parcel booking (CSV / API) | ✅ | City & country |
+| MC4 | Address book of recipients | ✅ | |
+| MC5 | Pickup scheduling window (single & recurring) | ✅ | |
+| MC6 | Live shipment tracking dashboard | ✅ | |
+| MC7 | Cash-on-Delivery (COD) remittance report | ✅ | 🔒 |
+| MC8 | Weekly payout + invoice download | ✅ | |
+| MC9 | API keys + webhooks for ERP/OMS integration | ✅ | |
+| MC10 | Return / RTO (Return-to-Origin) handling | ✅ | |
+| MC11 | Label printing (A5/A6 thermal) | ✅ | |
+| MC12 | Rate card simulator & contract pricing | 🟡 | |
+| MC13 | Multi-warehouse support | 🟡 | |
+
+### 2.5 Hub Panel (Courier country-wide operations)
+
+| # | Feature | Priority | Notes |
+|---|---------|----------|-------|
+| H1 | Hub staff login + role-scoped access | ✅ | 🔒 |
+| H2 | Parcel **scan-in** (pickup arrival) via barcode/QR | ✅ | |
+| H3 | Sort by destination hub / zone | ✅ | Sort-code on label |
+| H4 | **Manifest creation** for line-haul / air / rail leg | ✅ | |
+| H5 | Line-haul dispatch + seal number + driver assignment | ✅ | |
+| H6 | Inbound manifest reconciliation (scan-in of incoming bag) | ✅ | |
+| H7 | Handover to last-mile rider | ✅ | |
+| H8 | Exception handling: damaged, missing, reattempt | ✅ | 🔒 |
+| H9 | COD cash reconciliation at hub | ✅ | 🔒 Finance |
+| H10 | Live hub KPIs (in/out, aging, SLA breach) | ✅ | |
+| H11 | Hub capacity & cut-off time configuration | ✅ | |
+| H12 | CCTV / photo-proof attachment on exceptions | 🟡 | |
+| H13 | Shift roster & attendance | 🟡 | |
+
+### 2.6 Admin / Ops Dashboard
+
+| # | Feature | Priority | Notes |
+|---|---------|----------|-------|
+| A1 | User/driver/restaurant/merchant/hub CRUD + suspend | ✅ | |
+| A2 | KYC approval queues (per panel) | ✅ | 🔒 |
+| A3 | Live ops map (drivers, orders, trips, shipments) | ✅ | |
 | A4 | Dispute/refund console | ✅ | |
 | A5 | Fraud detection rules + alerts | ✅ | 🔒 |
-| A6 | Pricing/surge config per city/zone | ✅ | |
-| A7 | Zone & geo-fence management | ✅ | |
-| A8 | Financial reconciliation & reports | ✅ | |
-| A9 | Marketing/promo campaign console | 🟡 | |
+| A6 | Pricing / surge / rate-card config per city/zone/lane | ✅ | |
+| A7 | Zone, service-area & hub-network management | ✅ | |
+| A8 | Financial reconciliation (rider, driver, restaurant, merchant, hub, COD float) | ✅ | |
+| A9 | Marketing / promo campaign console | 🟡 | |
 | A10 | A/B experiment platform | 🟡 | |
-| A11 | ML model monitoring (matching/ETA) | 🟡 | |
+| A11 | ML model monitoring (matching/ETA/fraud) | 🟡 | |
+| A12 | Staff RBAC + 2FA + audit trail | ✅ | 🔒 |
 
 ---
 

@@ -78,16 +78,82 @@ Based on [01_features_list.md](01_features_list.md), [02_system_design.md](02_sy
 | GET  | `/driver/earnings?range=`     | Driver | Earnings summary |
 | POST | `/driver/payouts`             | Driver | Request instant payout |
 
-### 1.5 Merchant
+### 1.5 Restaurant Panel (Food vertical)
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| GET  | `/merchant/stores/{id}/orders?status=`       | Merchant | Incoming orders |
-| POST | `/merchant/orders/{id}/accept`               | Merchant | Accept (with prep time) |
-| POST | `/merchant/orders/{id}/reject`               | Merchant | Reject |
-| POST | `/merchant/orders/{id}/ready`                | Merchant | Ready for pickup |
-| PATCH| `/merchant/menu/items/{id}`                  | Merchant | Toggle availability / edit |
-| POST | `/merchant/menu/items`                       | Merchant | Create menu item |
+| GET  | `/restaurant/outlets/{id}/orders?status=`    | Restaurant | Incoming food orders |
+| POST | `/restaurant/orders/{id}/accept`             | Restaurant | Accept (with prep-time) |
+| POST | `/restaurant/orders/{id}/reject`             | Restaurant | Reject with reason |
+| POST | `/restaurant/orders/{id}/ready`              | Restaurant | Mark ready for pickup |
+| PATCH| `/restaurant/menu/items/{id}`                | Restaurant | Edit / toggle availability |
+| POST | `/restaurant/menu/items`                     | Restaurant | Create menu item |
+| PATCH| `/restaurant/outlets/{id}/hours`             | Restaurant | Update opening hours |
+| POST | `/restaurant/outlets/{id}/toggle-open`       | Restaurant | Open/close outlet |
+| GET  | `/restaurant/payouts?range=`                 | Restaurant | Payout history |
+| GET  | `/restaurant/analytics/summary?range=`       | Restaurant | Top items, peak hours |
+
+### 1.6 Merchant Panel (Parcel + Courier + Retail)
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/merchant/shipments`                        | Merchant | Book single parcel/courier shipment |
+| POST | `/merchant/shipments/bulk`                   | Merchant | Bulk upload (CSV/JSON) — returns batch id |
+| GET  | `/merchant/shipments?status=&from=&to=&cursor=` | Merchant | List shipments |
+| GET  | `/merchant/shipments/{awb_no}`               | Merchant | Shipment detail + scan history |
+| POST | `/merchant/shipments/{awb_no}/cancel`        | Merchant | Cancel (only before pickup) |
+| GET  | `/merchant/shipments/{awb_no}/label`         | Merchant | Get printable label (PDF A5/A6) |
+| POST | `/merchant/pickups`                          | Merchant | Schedule pickup window |
+| GET  | `/merchant/rates?origin=&dest=&kg=&tier=`    | Merchant | Rate card lookup |
+| GET  | `/merchant/cod/remittance?range=`            | Merchant | COD remittance report |
+| GET  | `/merchant/payouts?range=`                   | Merchant | Weekly payout statements |
+| POST | `/merchant/api-keys`                         | Merchant | Issue API key |
+| POST | `/merchant/webhooks`                         | Merchant | Register webhook URL (signed) |
+| GET  | `/merchant/catalog/items`                    | Merchant | Retail catalog (if enabled) |
+| POST | `/merchant/catalog/items`                    | Merchant | Add retail item |
+
+### 1.7 Hub Panel (Courier operations)
+
+All endpoints require `hub_staff` role bound to a specific `hub_id`; finance actions require `hub_finance` + MFA.
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/hub/scans`                                 | hub_clerk | Record a scan (see §2.6) — idempotent |
+| POST | `/hub/scans/bulk`                            | hub_clerk | Offline queue flush |
+| GET  | `/hub/shipments?status=&age=&cursor=`        | hub_clerk | Shipments currently at hub |
+| GET  | `/hub/shipments/{awb_no}`                    | hub_clerk | Detail + legs + scans |
+| POST | `/hub/manifests`                             | hub_supervisor | Create line-haul manifest |
+| POST | `/hub/manifests/{id}/add-awb`                | hub_supervisor | Attach AWBs |
+| POST | `/hub/manifests/{id}/dispatch`               | hub_supervisor | Seal + dispatch (driver, seal_no) |
+| POST | `/hub/manifests/{id}/receive`                | hub_supervisor | Inbound scan of full manifest |
+| POST | `/hub/manifests/{id}/reconcile`              | hub_supervisor | Mark reconciled (mismatches → exceptions) |
+| POST | `/hub/shipments/{awb_no}/exception`          | hub_clerk | File an exception (damaged/missing/address) |
+| POST | `/hub/shipments/{awb_no}/handover`           | hub_clerk | Hand to last-mile driver |
+| GET  | `/hub/kpis?range=`                           | hub_supervisor | In/out, aging, SLA-breach counts |
+| POST | `/hub/cod/close-driver-bag/{driver_id}`      | hub_finance | Close driver COD bag → ledger post |
+| POST | `/hub/cod/deposit`                           | hub_finance | Record bank deposit of hub float |
+| GET  | `/hub/cod/float`                             | hub_finance | Current hub cash float |
+
+### 1.8 Courier (Rider-side tracking)
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/courier/quote`                             | Bearer | Quote an inter-city shipment |
+| POST | `/courier/shipments`                         | Bearer | Book courier (non-merchant rider) |
+| GET  | `/courier/shipments/{awb_no}`                | Bearer | Current status + scan timeline |
+| GET  | `/courier/track/{awb_no}`                    | Public (rate-limited) | Public tracking by AWB (limited fields) |
+| POST | `/courier/shipments/{awb_no}/cancel`         | Bearer | Cancel (pre-pickup only) |
+
+### 1.9 Merchant (legacy food use cases — superseded by 1.5)
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET  | `/merchant/stores/{id}/orders?status=`       | Merchant | Deprecated: use `/restaurant/outlets/{id}/orders` |
+| POST | `/merchant/orders/{id}/accept`               | Merchant | Deprecated |
+| POST | `/merchant/orders/{id}/reject`               | Merchant | Deprecated |
+| POST | `/merchant/orders/{id}/ready`                | Merchant | Deprecated |
+| PATCH| `/merchant/menu/items/{id}`                  | Merchant | Deprecated |
+| POST | `/merchant/menu/items`                       | Merchant | Deprecated |
 
 ### 1.6 Payments
 
@@ -242,6 +308,119 @@ Response `200`:
   "captured_at":"2026-04-21T10:12:03Z"
 }
 ```
+
+### 2.6 Courier Booking (Merchant)
+
+**`POST /merchant/shipments`** — idempotent
+
+Headers: `Idempotency-Key`, `X-API-Key` (merchant server-to-server) or Bearer.
+
+Request:
+```json
+{
+  "service_tier": "express",
+  "sender": {
+    "name": "ACME Shop",
+    "phone": "+8801XXXXXXXX",
+    "address": "House 12, Road 7, Banani, Dhaka",
+    "origin_hub_code": "DAC01"
+  },
+  "recipient": {
+    "name": "Karim Uddin",
+    "phone": "+8801YYYYYYYY",
+    "address": "Lalkhan Bazar, Chattogram",
+    "dest_hub_code": "CTG02"
+  },
+  "parcel": { "weight_kg": 1.2, "declared_value": 1500 },
+  "cod": { "enabled": true, "amount": 1500, "currency": "BDT" },
+  "reference": "ORD-98213"
+}
+```
+
+Response `201`:
+```json
+{
+  "shipment_id": "shp_01HZ...",
+  "awb_no": "SA026JK8P41",
+  "status": "created",
+  "sla_deadline": "2026-04-23T18:00:00Z",
+  "price": { "amount": 120.00, "currency": "BDT" },
+  "label_url": "https://api.superapp.example/v1/merchant/shipments/SA026JK8P41/label"
+}
+```
+
+### 2.7 Hub Scan (idempotent)
+
+**`POST /hub/scans`**
+
+Request:
+```json
+{
+  "awb_no": "SA026JK8P41",
+  "scan_type": "hub_inbound",
+  "hub_id": "hub_01HZ...",
+  "geo": { "lat": 22.3569, "lng": 91.7832 },
+  "notes": "Bag #17",
+  "client_scan_id": "local-uuid-for-offline-queue"
+}
+```
+
+Response `200`:
+```json
+{
+  "scan_id": "scn_01HZ...",
+  "shipment_status": "at_dest_hub",
+  "next_expected_scan": "out_for_delivery"
+}
+```
+
+Idempotency: server dedupes on `(awb_no, hub_id, scan_type, minute-bucket)` plus `client_scan_id`.
+
+### 2.8 Hub Manifest Dispatch
+
+**`POST /hub/manifests/{id}/dispatch`**
+
+Request:
+```json
+{
+  "driver_id": "drv_01HZ...",
+  "vehicle_id": "veh_01HZ...",
+  "seal_no": "SEAL-334421"
+}
+```
+
+Response `200`:
+```json
+{
+  "manifest_id":"mft_01HZ...",
+  "manifest_no":"MFT-20260421-007",
+  "dest_hub_code":"CTG02",
+  "total_awb_count": 182,
+  "total_weight_kg": 240.6,
+  "status":"dispatched",
+  "dispatched_at":"2026-04-21T20:15:00Z"
+}
+```
+
+### 2.9 Public Track (rate-limited)
+
+**`GET /courier/track/{awb_no}`** — public, 20 req/min/IP
+
+Response `200`:
+```json
+{
+  "awb_no": "SA026JK8P41",
+  "status": "in_transit",
+  "eta": "2026-04-23T14:00:00Z",
+  "timeline": [
+    {"type":"pickup","at":"2026-04-21T12:10:00Z","city":"Dhaka"},
+    {"type":"hub_inbound","at":"2026-04-21T14:20:00Z","hub":"DAC01"},
+    {"type":"manifest_out","at":"2026-04-21T20:15:00Z","to":"CTG02"}
+  ]
+}
+```
+
+Only non-PII fields returned; sender/recipient names masked.
 
 ---
 

@@ -57,14 +57,18 @@
 | 3 | **Identity Service** | Sign-up, OTP, OAuth, sessions, RBAC | PostgreSQL + Redis | Go |
 | 4 | **User Profile Service** | Profile, addresses, preferences | PostgreSQL | Go/Java |
 | 5 | **Driver Service** | Driver profile, KYC, vehicle, status | PostgreSQL + S3 (docs) | Java |
-| 6 | **Merchant Service** | Merchant accounts, stores, hours | PostgreSQL | Java |
-| 7 | **Catalog Service** | Menus/items/availability | MongoDB + Elasticsearch | Node.js |
+| 6 | **Merchant Service** | Retail merchant accounts, storefronts, API keys, webhooks | PostgreSQL | Java |
+| 6b | **Restaurant Service** | Food-vertical merchant (restaurant) profile, outlets, opening hours, prep-time | PostgreSQL | Java |
+| 6c | **Hub Service** | Courier hub network, capacity, cut-off times, staff roster | PostgreSQL | Go |
+| 7 | **Catalog Service** | Menus/items/availability (food) + retail catalog | MongoDB + Elasticsearch | Node.js |
 | 8 | **Location Tracking Service** | Ingest driver location stream | Redis (GEOADD) + Kafka + Cassandra (history) | Go |
 | 9 | **Ride-Matching / Dispatch Service** | Match request ↔ best driver | Redis + in-mem index | Go |
 | 10 | **Pricing Service** | Fare estimate, surge, promos | Redis + PostgreSQL | Python/Go |
 | 11 | **Trip/Order Orchestrator** | State machine of a trip or order (Saga) | PostgreSQL + Kafka | Java (Temporal/Camunda) |
 | 12 | **Food-Order Service** | Food-specific order flow | PostgreSQL + MongoDB | Node.js |
-| 13 | **Parcel Service** | Parcel-specific order flow | PostgreSQL | Go |
+| 13 | **Parcel Service** | Intra-city parcel flow (single-leg, direct) | PostgreSQL | Go |
+| 13b | **Courier Service** | Inter-city / country-wide courier with multi-leg hub routing (AWB, manifest, sort, line-haul, last-mile) | PostgreSQL (partitioned) + Kafka | Go/Java |
+| 13c | **COD / Remittance Service** | Tracks COD collection per shipment, driver bag, hub float; reconciles to ledger | PostgreSQL (ledger) | Java |
 | 14 | **Payment Service** | Charges, refunds, payout, ledger | PostgreSQL (double-entry ledger) | Java |
 | 15 | **Wallet Service** | In-app wallet balance & topup | PostgreSQL | Java |
 | 16 | **Notification Service** | Push/SMS/Email/In-app | Kafka consumer; FCM/APNs/Twilio | Go |
@@ -260,3 +264,90 @@ Noisy-neighbor risk between geo writes and auth traffic is eliminated.
 - §7 Redis split into three clusters.
 - §10 Security section expanded (WS tickets, device binding, admin MFA, webhook replay, edge hardening).
 - §11 Multi-region write model clarified for financial data.
+
+---
+
+## 14. Six-Panel Model & Courier Pipeline
+
+### 14.1 Panel → BFF → Service map
+
+| Panel | BFF | Core services touched |
+|-------|-----|------------------------|
+| **Rider App** | `bff-rider` | Identity, User Profile, Pricing, Dispatch, Trip Orchestrator, Food-Order, Parcel, Courier, Payment, Notification, Chat, Rating |
+| **Driver App** | `bff-driver` | Identity, Driver, Location, Dispatch, Trip Orchestrator, Payment (payout), Notification, Chat, COD/Remittance |
+| **Restaurant Panel** | `bff-restaurant` | Identity, Restaurant, Catalog, Food-Order, Payment (payout), Notification |
+| **Merchant Panel** | `bff-merchant` | Identity, Merchant, Catalog, Parcel, Courier, COD/Remittance, Payment (payout), Notification |
+| **Hub Panel** | `bff-hub` | Identity (staff RBAC), Hub, Courier, COD/Remittance, Notification |
+| **Admin Dashboard** | `bff-admin` | All services (read + privileged write), Admin/Ops, Fraud, Analytics, Audit |
+
+Each BFF is a separate deployment with its own OIDC client and rate-limit profile.
+
+### 14.2 Courier (country-wide) pipeline
+
+Multi-leg shipment lifecycle orchestrated by the **Trip/Order Orchestrator** (Temporal) using domain events on Kafka:
+
+```
+  [Merchant/Rider books]
+          │
+          ▼
+  ┌─────────────────┐   courier.shipment.created
+  │ Courier Service │ ─────────────────────────────▶ Kafka
+  └───────┬─────────┘
+          │  AWB (barcode) generated
+          ▼
+   Leg 1: FIRST-MILE PICKUP  (Driver / Bike)
+          │  courier.leg.picked_up
+          ▼
+   Origin Hub: SCAN-IN         (Hub staff — Hub Panel)
+          │  courier.hub.scan_in
+          ▼
+   SORT by destination hub    (Sort-code on label)
+          │  courier.hub.sorted
+          ▼
+   Leg 2: LINE-HAUL  (Truck driver, manifest + seal)
+          │  courier.manifest.dispatched
+          ▼
+   Destination Hub: INBOUND SCAN
+          │  courier.hub.scan_in (inbound)
+          ▼
+   Handover to last-mile rider
+          │  courier.leg.handover
+          ▼
+   Leg 3: LAST-MILE DELIVERY  (Driver / Bike)
+          │  courier.leg.delivered  (+ optional COD collected)
+          ▼
+   Reconcile COD → Ledger
+```
+
+Key design points:
+
+- **AWB (Air-Waybill number)** is the stable ID across all legs; customer tracking uses AWB, not internal UUIDs.
+- **Idempotent scan events** keyed by `(awb, hub_id, scan_type)` to tolerate repeat scans at hubs.
+- **Hub capacity** & **cut-off time** per hub published in Redis; Courier Service refuses bookings after cut-off for same-day dispatch.
+- **Line-haul manifest** is a first-class aggregate: `manifest_id`, `origin_hub`, `dest_hub`, `vehicle_id`, `seal_no`, list of AWBs; reconciled on inbound scan (mismatches create exceptions).
+- **Exceptions** (damaged / missing / address-issue / RTO) are a separate state machine — never silently lost.
+- **Failure compensation:** Saga rolls back payment authorization if pickup never happens within N hours; refunds COD float if lost.
+
+### 14.3 COD (Cash-on-Delivery) flow
+
+1. Last-mile driver marks `delivered + cod_collected` with photo proof.
+2. Driver end-of-day closes bag at a hub/office → **Remittance Service** debits driver float account, credits hub cash-float account (double-entry ledger in [03_database_schema.md](03_database_schema.md#26-payments-double-entry-ledger)).
+3. Hub deposits to bank → ledger posts final transfer to platform clearing account.
+4. Merchant weekly payout = Σ(delivered COD) − commission − adjustments.
+5. All transitions are ledger entries; no floating cash state outside the ledger.
+
+### 14.4 Kafka topics added
+
+- `courier.shipment.*` (created, cancelled, delivered, exception)
+- `courier.leg.*` (picked_up, handover, delivered)
+- `courier.hub.*` (scan_in, sorted, manifest_dispatched, manifest_received)
+- `remittance.*` (driver_closed, hub_deposited, merchant_payout_ready)
+
+Partitioning key: `origin_hub_id` (high-throughput hubs sub-partitioned by `hash(awb)`).
+
+### 14.5 Hub Panel app specifics
+
+- **Tablet / PC web app** with barcode-scanner input focus mode.
+- Works offline for ≥ 15 min (IndexedDB queue) — scans flushed to server when online; backend dedupes on `(awb, hub_id, scan_type, scan_ts_bucket)`.
+- Hub staff identity is **separate from driver/merchant identity**; staff assigned to a specific hub with RBAC (`hub_clerk`, `hub_supervisor`, `hub_finance`).
+- Device binding + MFA enforced on hub-finance role (COD handling).

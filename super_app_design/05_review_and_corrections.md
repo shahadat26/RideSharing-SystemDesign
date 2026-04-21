@@ -85,3 +85,73 @@ Goal: identify bottlenecks, missing indexes, security vulnerabilities, and scali
 8. Enforce OTP rate-limiting on phone + IP + global + CAPTCHA; constant-time compare.
 9. Ledger double-entry invariant trigger + UNIQUE `(txn_id, account_id, direction)`.
 10. Partition `audit_log`; add retention & archival.
+
+---
+
+## F. Six-Panel & Courier/Hub Additions — Second Review Pass
+
+Scope of this pass: Restaurant, Merchant, Hub panels and country-wide Courier pipeline added in `01` §1, `02` §14, `03` §2.3b/c and §2.5b, `04` §1.5–1.9 and §2.6–2.9.
+
+### F.1 Architecture / Scaling
+
+1. **Bulk shipment API `/merchant/shipments/bulk` is synchronous in spec** — will time out on 10k-row CSVs. Must be **async with batch-id + status polling** (or server-sent events) and write via Kafka + workers.
+2. **Hub scan fan-out** — every scan touches `courier_shipments.status`. At peak (100+ scans/sec per mega-hub) the row-level hotspot on a single shipment causes lock contention across sort/manifest stages. Move status to an **append-only events + materialized latest-status view** (CDC-refreshed) or use advisory locks per `awb_no`.
+3. **Manifest dispatch is a multi-row transaction** (manifest + N AWBs + N shipment_legs). Needs to be idempotent at the manifest level with `Idempotency-Key` and bounded in size (chunk > 5000 AWBs into sub-manifests).
+4. **Offline hub-app queue** — if a hub loses connectivity for hours, replay of thousands of scans at reconnect can overwhelm the backend. Need **server-side rate limiting per device** and client-side batch endpoints (`/hub/scans/bulk`) with 1 MB cap and exponential backoff.
+5. **Public tracking endpoint `/courier/track/{awb}`** is the classic target of scraping / enumeration. Need heavy caching (CDN with 60 s TTL), AWB obfuscation length ≥ 11 chars (already ok), per-IP + per-AWB rate limits, and bot detection.
+6. **Hub cut-off logic** is per-hub but no clear clock source — clock-skew across hubs will create edge-case booking disputes. Use server-authoritative `Asia/Dhaka` time and cache cut-offs in Redis with short TTL.
+7. **No topology diagram** for cross-region courier (if countries expand). Document assumption: single-country deployment; multi-country deferred to V2.
+
+### F.2 Security / Fraud
+
+1. **COD endpoints are money-movement** and currently only require role. Must require **MFA + step-up** and **device-bound session** for `hub_finance`, plus **4-eyes approval** for deposits above threshold.
+2. **Driver COD bag** is a cash custody object — need anti-fraud checks: collected ≠ delivered reconciliation, aging alerts (cash held > 24h triggers review), and a dispute log.
+3. **Merchant API keys** — lifecycle undefined. Need scopes (create-shipment only vs full), rotation, IP allow-list, and rate limits **per key** (not per account).
+4. **Webhook URLs registered by merchants** — document SSRF protection (private IP/cloud metadata blocklist, DNS pinning), max body size, HMAC signing, and allow `X-Signature-Version` for future algorithm migration.
+5. **Recipient PII on courier labels** — printed labels contain phone & full address. Labels should use a masked phone (masking proxy number) and a QR for full-address lookup only by authorized hub staff.
+6. **Cross-panel authorization** — `/hub/shipments/{awb}` must check `staff.hub_id ∈ {shipment.origin_hub, shipment.dest_hub, shipment.current_leg.hub}`; otherwise any hub clerk can read any shipment (IDOR across hubs).
+7. **Restaurant / Merchant login reuse** — if they share the same `users` table, document that a user can hold multiple roles but role elevation (becoming hub_finance) requires a separate onboarding + MFA.
+
+### F.3 Schema
+
+1. `courier_shipments.awb_no` **UNIQUE** is scoped per-partition (`UNIQUE (awb_no, created_at)`) — queries by AWB alone won't be unique at index level; the `idx_courier_awb` is BTREE but not unique. Add a **global unique constraint** via a separate non-partitioned `awb_index(awb_no PRIMARY KEY, shipment_id, created_at)` table that is written in the same transaction, so lookups by AWB are O(log n) and truly unique.
+2. `shipment_scans` unique constraint `(awb_no, hub_id, scan_type, scanned_at)` uses exact timestamp — offline devices will send slightly different timestamps for the same logical event. Better: bucket by minute (`date_trunc('minute', scanned_at)`) **or** include `client_scan_id` in the unique constraint.
+3. `shipment_legs` FK to partitioned parent works but inserts require knowing `shipment_created_at` — document that API must always carry it or indirect via `awb_index`.
+4. No index on `courier_shipments(status, sla_deadline)` for the SLA-breach report used by Hub KPIs. Add:
+   ```sql
+   CREATE INDEX idx_courier_sla_breach ON courier_shipments(sla_deadline)
+       WHERE status IN ('created','picked_up','at_origin_hub','in_transit','at_dest_hub','out_for_delivery');
+   ```
+5. `cod_collections.status` is a workflow on money — add a **CHECK** constraint and a state-transition trigger to prevent `deposited → collected` regressions.
+6. `hubs.cutoff_time` is a single `TIME` but hubs may have multiple service tiers with different cut-offs. Consider `hub_cutoffs(hub_id, service_tier, cutoff_time)` for future-proofing.
+7. `courier_lanes` rate is flat per-kg; real carriers have **slab pricing** (0–1 kg flat, 1–5 kg rate, etc.). Model as `courier_lane_slabs` child table.
+
+### F.4 API
+
+1. `/merchant/shipments` request does not specify **max weight / dimensions** validation or service-tier eligibility — overweight bookings must be rejected at API with a typed error (`shipment.overweight`).
+2. `/hub/scans` lacks **last-write-wins tie-breaker** when offline replay collides; add `client_scan_id` to spec (already added, but mark as **required**).
+3. Public `/courier/track/{awb}` should return **stable, minimal status vocabulary** ("Booked / In Transit / Out for Delivery / Delivered / Returned") — not internal enum values — to avoid coupling customers to internal states.
+4. `/merchant/api-keys` missing scopes + secret echoed only on creation; document one-time-secret pattern.
+5. No pagination contract defined for `/hub/shipments` beyond `cursor=`; spec should state opaque base64 cursor with embedded sort key.
+6. Missing endpoint: **RTO (return-to-origin)** initiation — add `POST /hub/shipments/{awb}/rto`, `POST /merchant/shipments/{awb}/request-rto`.
+
+### F.5 Operational
+
+- Need **SLOs for hub operations**: scan latency < 500 ms p95, manifest-dispatch success > 99.9%, COD reconciliation drift < 0.1% daily.
+- Hub printer/scanner hardware drift: define firmware/OS baseline for tablet + printer compatibility matrix.
+- Line-haul vehicle GPS: spec assumes driver app runs on truck; confirm battery/networking for multi-hour trips on intercity routes.
+
+---
+
+## Priority to Fix (Top 10) — Updated
+
+1. Harden WebSocket auth (no JWT in URL) + ticket exchange.
+2. Shard Realtime Gateway per city, add draining, and reconnect jitter.
+3. Sub-partition Kafka `location.driver.updates` + add `courier.*` topic partitioning by `origin_hub_id`.
+4. Separate Redis clusters: `geo`, `session/idem/ratelimit`, `cache`.
+5. Missing indexes: `trips(driver_id) active`, `trips(payment_id)`, `ratings(ratee_id, created_at DESC)`, `courier_shipments(status, sla_deadline)`, plus global `awb_index` for AWB uniqueness.
+6. Scope `payments.idempotency_key` to `(service, key)`; add `promo_redemptions`, `cod_collections` state-transition guard.
+7. IDOR / authorization on every resource — incl. hub-staff cross-hub read, merchant API-key scopes, RBAC for Hub Panel.
+8. MFA + step-up + 4-eyes for `hub_finance` COD deposits; device binding for driver & hub-finance sessions.
+9. Async bulk shipment booking (`/merchant/shipments/bulk`) + bounded offline hub-scan replay.
+10. Ledger double-entry invariant trigger + COD reconciliation with aging alerts + partitioned `audit_log`.

@@ -1,4 +1,4 @@
-   # 🚗 Ride Sharing Application - Complete System Design
+   # 🚗 Ride Sharing, Food Delivery, Parcel(City), Courier(Country) Application - Complete System Design
 ## Like UBER | OLA | Rapido | Lyft
 
 ---
@@ -10,6 +10,9 @@
 3. [Business Logic & Features](#business-logic--features)
    - [Rider Panel Features](#-rider-panel-features)
    - [Driver Panel Features](#-driver-panel-features)
+   - [Restaurent Panel Features](#-restaurent-panel-features)
+   - [Merchant Panel Features](#-merchant-panel-features)
+   - [Hub Panel Features](#-hub-panel-features)
    - [Admin Panel Features](#-admin-panel-features)
 4. [Complete API Documentation](#complete-api-documentation)
 5. [Database Design](#database-design)
@@ -27,7 +30,7 @@
 
 ## Project Overview
 
-A complete ride-sharing platform connecting **Riders** with **Drivers**, managed by **Admins**. The system enables on-demand transportation services with real-time tracking, dynamic pricing, secure payments, and comprehensive analytics.
+A complete ride-sharing, food-delivery, parcel(city), courier(country) platform connecting **Riders**, **Drivers**, **Restaurent**, **Merchant**, **Hub** managed by **Admins**. The system enables on-demand transportation services with real-time tracking, dynamic pricing, secure payments, and comprehensive analytics.
 
 ### Core Flow
 ```
