@@ -129,10 +129,8 @@ Courier  : Rider/Merchant → Driver(FM) → Origin Hub → Sort → Line-haul �
 |---------|-------------|-------|
 | **Fare estimate** | Distance × rate + time × rate + surge | `base + km*r_km + min*r_min)*surge + booking` |
 | **Vehicle choice** | Bike / Auto / Sedan / SUV | Per-city availability |
-| **Surge pricing** | Dynamic | Based on demand/supply ratio per zone |
-| **Schedule ride** | 15 min – 7 days ahead | Pre-dispatch 10 min before pickup |
+| **Surge pricing (Convence Fare)** | Dynamic | Based on demand/supply ratio per zone |
 | **Live tracking** | WebSocket | ≤ 3 s driver-location interval |
-| **Share trip** | Read-only live link | Expires at trip end |
 | **SOS** | One-tap emergency | Dedicated safety channel + on-call contacts |
 | **In-trip chat / masked call** | PII-masked number proxy | Expires 30 min after trip |
 | **Rate & tip** | 1–5 stars + optional tip | Affects driver ranking; tip flows to ledger |
@@ -172,24 +170,8 @@ Courier  : Rider/Merchant → Driver(FM) → Origin Hub → Sort → Line-haul �
 
 | Feature | Description | Logic |
 |---------|-------------|-------|
-| **Multi-stop ride** | Up to 3 intermediate stops | Re-prices on each stop add/remove; route re-optimised |
-| **Ride for someone else** | Book on behalf of contact | Recipient gets SMS w/ live link + driver call masked |
-| **Scheduled / recurring** | One-shot or weekly recurring | Pre-dispatch 10 min before; auto-cancel if no driver in 5 min |
-| **Favorite / blocked drivers** | Per-rider lists | Affects offer eligibility filter |
 | **Pickup PIN** | 4-digit code shared by app | Driver must enter to start trip; mitigates wrong-pickup |
-| **Fare split** | Split bill across riders | Each pays their share via own payment method |
-| **Ride preferences** | Quiet ride, AC, music off, pet-friendly | Hint passed to driver; not enforced |
-| **Lost & Found** | Report item from past trip | Routes to driver via masked call + support ticket |
-| **Trip insurance** | Per-trip optional cover | Underwritten by 3rd party; receipt attached |
-| **Outstation / rental** | Hourly or city-to-city packages | Different pricing engine + driver pool |
-| **Receipts & invoices** | PDF per trip + monthly statement | Email + in-app download; GST/VAT compliant |
-| **Subscription pass** | E.g. Uber One / Pathao Pro | Discounts, free delivery threshold, priority dispatch |
-| **Loyalty / rewards** | Points per spend | Redeem for ride credits; tier badges |
 | **Referral program** | Referrer + referee credits | Anti-abuse via device + payment-method graph |
-| **Corporate / business profile** | Switch personal ↔ business | Bills to org; manager approval workflow; SSO supported |
-| **Family / Teen account** | Linked dependent accounts | Live tracking + spend cap shared with primary |
-| **Voice notes in chat** | 30-s clips | Stored 7 days; auto-transcribed for safety review |
-| **Annotated pickup spot** | Drop a precise pin + photo | Reduces pickup confusion; cached per address |
 
 ---
 
@@ -277,22 +259,10 @@ Surge:   Driver receives 70–80% of surge amount
 
 | Feature | Description | Logic |
 |---------|-------------|-------|
-| **Quest / Streak bonuses** | "Complete 30 trips this week → +500" | Tracked in incentives service; ledger credit on completion |
-| **Long-pickup compensation** | Pickup > X km auto-pays extra | Calculated at trip start |
-| **Wait-time charges** | After 5-min free → per-min charge | Auto-added to fare; capped per city |
 | **Cancellation fee** | Charged to rider after grace period | Split with driver per policy |
-| **Toll auto-detection** | Geofence + lane data | Added to fare with receipt |
-| **Document expiry alerts** | License/Insurance/RC expiry T-30 / T-7 / T-1 | Push + email; soft-block on expiry |
-| **Vehicle inspection reminders** | Annual or per-N-trips | Photo upload, hub-staff sign-off |
-| **In-trip safety** | Trip recording (audio, opt-in), speed alert, fatigue warning | Audio encrypted on-device, uploaded only on dispute |
-| **Earnings goal tracker** | Daily target + progress bar | Local computation + summary |
-| **Fuel / EV charging perks** | Partner discounts | Static partner list + redemption code |
-| **Driver chat / community** | In-app feed, support FAQ | Read-only feed by ops |
+| **In-trip safety** | Trip recording (audio, opt-in), speed alert, fatigue warning | Audio encrypted on-device, uploaded only on 
 | **Driver-to-driver referral** | Bonus on referee's first 50 trips | Referral table; anti-fraud graph |
-| **Vehicle swap / second driver** | One vehicle, two drivers | Active session per device; KYC per driver |
 | **Earnings withdrawal limits** | Daily/weekly caps + KYC tier | Anti-money-laundering |
-| **Tax / TIN management** | Annual statement, withholding | Country-specific |
-| **Roadside assistance** | One-tap from in-trip menu | Routes to partner; cost flagged |
 
 ---
 
@@ -351,19 +321,9 @@ Surge:   Driver receives 70–80% of surge amount
 | Feature | Description | Logic |
 |---------|-------------|-------|
 | **86 list (out of stock)** | One-tap mark item unavailable | Invalidates search index + cart re-validation |
-| **Stock count per item** | Optional inventory | Auto-86 on zero; manual reset |
 | **Order modification mid-prep** | Customer adds/removes item before "preparing" | Restaurant accept/decline; price diff posted to ledger |
-| **Multi-printer routing** | Kitchen vs bar vs packing | Configurable per category |
-| **Self-delivery mode** | Restaurant uses own riders | Skips dispatch; commission tier differs |
-| **Sponsored listings / ads** | Pay-per-click placement | Ad service + budget cap |
 | **Customer review reply** | Public reply to ratings | Auto-moderation + 1 reply per review |
-| **Refund issuance** | Partial/full at restaurant | 4-eyes if > threshold; ledger reversal |
-| **Tax invoice config** | GST/VAT number on receipts | Per outlet |
-| **Store-level KPIs** | Acceptance %, prep time, rejection % | Affects search ranking |
-| **Force-close / break mode** | Pause incoming for 15-60 min | Visible to customer with ETA-back-online |
-| **Tablet device management** | Tablet provisioning, remote wipe, OTA | MDM-lite; heartbeat every 60 s |
 | **Holiday calendar** | Closed-day schedule | Honoured by search filter |
-| **Image moderation** | Auto + human for menu photos | Blocks nudity/violations |
 
 ---
 
@@ -432,17 +392,11 @@ Webhook delivery: at-least-once with **exponential backoff** (1m, 5m, 30m, 2h, 1
 | Feature | Description | Logic |
 |---------|-------------|-------|
 | **Pickup address book** | Multiple warehouses CRUD | Default flagged; geocoded |
-| **Reverse pickup (returns)** | Customer-to-warehouse | Reverse AWB lifecycle |
-| **Per-shipment insurance** | Opt-in cover up to declared value | Premium added to price |
 | **Fragile / DG declaration** | Restricted goods list | Blocks line-haul if not eligible |
 | **Bulk label print** | One PDF for batch | Async, downloadable |
 | **Postpaid invoicing** | Credit limit + monthly invoice | Credit-check + auto-suspend on overdue |
 | **COD pincode allow-list** | Per-merchant serviceability | Block at booking if not allowed |
-| **API sandbox** | Test environment + dummy webhooks | Separate keyspace |
 | **Plugin integrations** | Shopify / WooCommerce / Magento | OAuth + per-store mapping |
-| **Sub-user accounts** | Ops, Finance, Viewer roles | Scoped permissions, audit |
-| **Brand customization** | Logo on label, on tracking page | Approved by admin |
-| **Custom packaging request** | Fragile wrap, branded box | Surcharge per shipment |
 | **Pickup SLA** | Time-window booking with auto-cancel | Driver assigned in window |
 | **Manifest export** | Daily handed-over PDF | For sender's records |
 | **Disputes / claims** | Lost/damaged/short COD | SLA 48 h; ledger reversal on approval |
@@ -452,15 +406,6 @@ Webhook delivery: at-least-once with **exponential backoff** (1m, 5m, 30m, 2h, 1
 ## 8. 🏭 Hub Panel Features
 
 Hub = physical courier sorting facility. Panel runs on tablet with barcode scanner + a web console for supervisors.
-
-### 8.1 Staff Roles (RBAC)
-
-| Role | Powers |
-|------|--------|
-| `hub_clerk` | Scan, handover, file exception |
-| `hub_supervisor` | Create manifest, dispatch, receive, reconcile, view KPIs |
-| `hub_finance` | Close driver COD bag, record bank deposit (requires **MFA + device binding**) |
-| `hub_manager` | All above + staff roster, capacity config |
 
 ### 8.2 Inbound & Sort
 
@@ -526,16 +471,10 @@ Tablet app stores scans in IndexedDB; flushes to `/hub/scans/bulk` on reconnect.
 | **Cage / location map** | Bin assignments by destination | Auto sort suggestion |
 | **Capacity & occupancy** | Real-time hub fill % | Alerts at 80% / 95%; blocks new inbound |
 | **Dock scheduling** | Truck arrival/departure slots | Avoids congestion; visible to line-haul drivers |
-| **Gate pass (in/out)** | Vehicle entry log | Security desk + CCTV cross-ref |
 | **Cross-docking** | Skip storage, direct transfer | Auto-flagged when transit time short |
 | **Damage assessment** | Photo + severity grade | Triggers claim workflow |
-| **Cycle count / stock take** | Periodic full audit | Reports discrepancies |
-| **Chain of custody log** | Every scan = custody transfer | Append-only; used in disputes |
-| **CCTV reference** | Camera ID + timestamp linked to scan | For claims/dispute review |
 | **Returns processing** | RTO inbound, sort, hand to merchant | Separate cage |
 | **Cut-off times** | Per lane daily cut-off | Late shipments roll to next manifest |
-| **Hub roster / shift mgmt** | Staff schedule, attendance | Affects KPI baselines |
-| **Power & connectivity SLA** | UPS + dual ISP requirement | Health-check to admin |
 | **Hub-to-hub transfer slip** | Reconciliation doc per manifest | Signed by both supervisors |
 
 ---
@@ -610,10 +549,7 @@ Tablet app stores scans in IndexedDB; flushes to `/hub/scans/bulk` on reconnect.
 | **Feature flags / experiments** | Per-city, per-cohort rollouts | LaunchDarkly-style; A/B with stat-sig guardrails |
 | **Geofence / zone editor** | Polygon drawing for zones, surge, no-go | Versioned; activates via remote config |
 | **City onboarding wizard** | Activate new city: tariff, hubs, zones, ops staff | One-page workflow |
-| **Holiday / curfew calendar** | Service blackouts, special tariffs | Auto-applied to pricing engine |
 | **Notification campaigns** | Push / SMS / email broadcast | Segmentation + frequency caps |
-| **Surge override** | Manual emergency surge / cap | Audited; expires automatically |
-| **Tariff calendar** | Festival / event pricing | Effective-from / effective-to |
 | **Document templates** | T&C, privacy, driver agreement versions | User must re-accept on update |
 | **Help center CMS** | FAQ, articles, in-app help | Localized |
 | **Block-list management** | Devices, IPs, payment instruments, BIN | Linked to fraud signals |
@@ -1778,7 +1714,7 @@ Every runbook in Git with ownership, on-call escalation, diagnostic queries, mit
 
 | Area | Primary | Secondary | Notes |
 |------|---------|-----------|-------|
-| Payments | bKash, Nagad, Rocket | Stripe / Adyen | Tokenized; 3DS where applicable; settlement file reconciled daily |
+| Payments |  | Stripe | Tokenized; 3DS where applicable; settlement file reconciled daily |
 | Cards | Network (Visa/MC) via Adyen | Local PG | PCI-DSS SAQ-A via tokenization |
 | Maps & geocoding | Google Maps | Mapbox, HERE | Per-city failover; client-side + server-side quotas |
 | Routing / ETA | OSRM self-hosted | Valhalla | Mapbox Directions for edge cases |
